@@ -17,3 +17,10 @@ ld.so looks for shared objects in these places in the following order:
 Keep in mind that adding a library to the system
 
 [How to handle dynamic and static libraries in Linux](https://opensource.com/article/20/6/linux-libraries)
+
+
+## rebuild shared object with SHSTK support enabled
+Fix:\
+`export GLIBC_TUNABLES=glibc.cpu.x86_ibt=off:glibc.cpu.x86_shstk=off`
+![image](https://user-images.githubusercontent.com/19384327/210727790-21b705f3-22d2-4525-aef3-93823d807d70.png)
+
