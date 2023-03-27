@@ -23,3 +23,9 @@ osEnv = Environment(ENV = os.environ)
 ICP_ROOT=osEnv['ENV']['ICP_ROOT']
 print(ICP_ROOT)
 ```
+
+
+# print target evaluated
+```
+Progress('Evaluating $TARGET\n')
+```
