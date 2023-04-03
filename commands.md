@@ -9,3 +9,18 @@ Change the "Distribution" to the codename of the version of Ubuntu you're using,
 4. sort command -r option : Reverse the result of comparisons.
 5. sort command -h option : It compares human readable numbers. This is GNU sort specific option only.
 6. head command -10 OR -n 10 option : It shows the first 10 lines.
+
+# caculate start and end time
+```
+#include <unistd.h>
+#include <sys/time.h>
+
+#define time_sec() ({struct timeval tp; gettimeofday(&tp, 0); tp.tv_sec + tp. tv_usec * 1.e-6;})
+...
+int start = time_sec();
+...
+int end = time_sec();
+```
+
+# get thread id
+`printf("=====getpid: %d tid:%lu, qat =====\n", getpid(), syscall(SYS_gettid));`
