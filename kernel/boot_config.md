@@ -51,6 +51,10 @@ make defconfig
 
 which config file is used during kernel build, please check: \
 `/usr/src/kernels/linux-5.18/.config`  or `/lib/modules/5.18.0/build/.config` \
+
+![image](https://github.com/michaelrun/Linux/assets/19384327/9a266c8f-6028-4f1e-a778-6e5e1f84d77f)
+
+
 on one machine(41): \
 ![image](https://github.com/michaelrun/Linux/assets/19384327/2d97c2a4-b9e5-492e-a758-ebe9cfd79bac)
 
