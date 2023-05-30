@@ -45,5 +45,14 @@ relate source code to generate .config
 ## make defconfig
 
 ```
-
+make defconfig
 ```
+
+
+which config file is used during kernel build, please check: \
+`/usr/src/kernels/linux-5.18/.config` \
+on one machine: \
+![image](https://github.com/michaelrun/Linux/assets/19384327/2d97c2a4-b9e5-492e-a758-ebe9cfd79bac)
+
+on another machine: \
+![image](https://github.com/michaelrun/Linux/assets/19384327/ebc43d76-6094-4a03-a643-971b7b0a2f01)
