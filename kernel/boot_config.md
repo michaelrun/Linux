@@ -28,4 +28,18 @@
               To compile this as a module, choose M here: the module
               will be called qat_4xxx.
 ```
+relate source code to generate .config
+
+                name = conf_get_configname();
+                in = zconf_fopen(name); //name = .config
+                if (in)
+                        goto load; //if exists already, load it directly
+                conf_set_changed(true);
+
+                env = getenv("KCONFIG_DEFCONFIG_LIST"); //if .config doesn't exist, 
+
 ## make defconfig
+
+```
+
+```
