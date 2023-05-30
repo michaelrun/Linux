@@ -37,6 +37,8 @@ relate source code to generate .config
                 conf_set_changed(true);
 
                 env = getenv("KCONFIG_DEFCONFIG_LIST"); //if .config doesn't exist, 
+                
+   KCONFIG_DEFCONFIG_LIST is set to: /lib/modules/5.18.0/.config /etc/kernel-config /boot/config-5.18.0 arch/x86/configs/x86_64_defconfig
 
 ## make defconfig
 
