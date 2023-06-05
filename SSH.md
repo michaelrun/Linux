@@ -3,3 +3,9 @@
 https://iximiuz.com/en/posts/ssh-tunnels/ \
 https://goteleport.com/blog/ssh-tunneling-explained/ \
 https://www.ssh.com/academy/ssh/tunneling-example
+
+
+## ssh command:
+```
+ssh -v -i ${DIR}/vm_ssh_test_key root@host -p 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o PreferredAuthentications=publickey phoronix-test-suite result-file-to-csv cpio && mv /root/cpio.csv /root/efi-large.csv && cat /root/efi-large.csv && sync && sleep 2
+```
