@@ -61,3 +61,5 @@ on one machine(41): \
 on another machine(21): \
 ![image](https://github.com/michaelrun/Linux/assets/19384327/dc57f670-e582-48c7-be17-90084e87725d)
 
+## evidence using current kernel configuration
+![image](https://github.com/michaelrun/Linux/assets/19384327/a3d429c8-14de-47ab-a3a6-98a8b6a2d21c)
