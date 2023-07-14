@@ -126,3 +126,48 @@ Or build into .deb packages
 Or install .deb packages
 
 `sudo dpkg -i ../*.deb` 
+
+
+# For VM usage
+
+1. Overview
+This guide introduce how to build AARCH64 CentOS initrd image using VM
+
+2. Install CentOS VM
+Please refer to the following wiki page on how to install CentOS VM
+
+01: Install CentOS Virtual Machine
+
+3. Build Kernel & IDPF Driver
+Refer to the following wiki page on how to build kernel version 5.14.21+
+
+ACC CentOS Bringup Guide
+
+4. Copy Kernel Modules to VM
+In kernel build directory, use following command to install 5.14.21+ kernel modules into directory $OUTGOING/modules/ \
+`make INSTALL_MOD_PATH=$OUTGOING/modules/ modules_install -j144 `\
+In idpf driver build directory, use following command to install idpf.ko into directory $OUTGOING/modules/ 
+```
+cp idpf.ko $OUTGOING/modules/lib/modules/5.14.21+/kernel/drivers/net/ethernet/intel/
+depmod -ae -F $KERNEL_BUILD_DIR/System.map -b $OUTGOING/modules/
+```
+Use following command to pack kernel modules and copy it to CentOS VM:
+```
+cd $OUTGOING/modules/lib/modules
+tar czf kernel-modules.tar.gz 5.14.21+/
+scp kernel-modules.tar.gz root@<VM-IP>:/lib/modules/
+```
+Enter CentOS VM, do the following commands to install kernel modules.
+```
+cd /lib/modules
+tar xzf kernel-modules.tar.gz
+```
+5. Install NFS Packages
+Enter the CentOS VM, install following packages
+```
+# dnf install nfs-utils nfs4-acl-tools
+```
+6. Generate Initrd Image
+In CentOS VM, use following command to generate initrd image for kernel version 5.14.21+:
+
+`dracut -v -m "nfs network base" --add-drivers "nfs nfsv4" --force-drivers "mfd-core idpf" initrd.img 5.14.21+`
