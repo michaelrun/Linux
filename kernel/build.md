@@ -1,4 +1,7 @@
+# build kernel of ubuntu
+[KernelBuild](https://kernelnewbies.org/KernelBuild)
 # build kernel
+
 Let's take lts-v5.4.102-yocto as an example.
 
 step1: Download the kernel.
