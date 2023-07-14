@@ -90,3 +90,36 @@ Install the five-package set (on your Joule Platform) with dpkg -i and then rebo
 sudo dpkg -i linux*.deb
 sudo reboot
 ```
+
+
+# Build deb kernel
+
+## Prerequisites
+`sudo apt install kernel-package fakeroot libncurses5-dev build-essential libelf-dev libssl-dev bison flex`
+## Get source code
+Download source code from kernel.org and extract, e.g. 4.14.150 \
+``
+wget https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.14.150.tar.xz
+xz -cd linux-4.14.150.tar.xz | tar xvf -
+``
+## Configure
+Copy current kernel configuration to be used for the new kernel
+```
+cp /boot/config-`uname -r` .config
+make olddefconfig
+```
+And customize if you want
+
+`make menuconfig`
+Double check the result .config before going forward
+
+## Build
+`make -j `
+Or build into .deb packages
+
+`make -j LOCALVERSION=-custom bindeb-pkg` 
+## Install
+`sudo make modules_install install` 
+Or install .deb packages
+
+`sudo dpkg -i ../*.deb` 
