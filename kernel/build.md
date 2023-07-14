@@ -38,3 +38,55 @@ Solution: open the. Config file and comment out the line
              CONFIG_SYSTEM_TRUSTED_KEYS="debian/certs/benh@debian.org.cert.pem"
 How to solve the problem of “can't allocate initrd" and "Unable to mount root fs on unknown-bolck", while the system booting on tgl ?
 The problem is that your initrd file is too large. If you want to solve this problem, you must must add the parameter "INSTALL_MOD_STRIP=1" like step6.
+
+
+
+# How to build kernel source from Joule branch of xenial repository.
+
+## Step-by-step guide Ubuntu Distribution
+
+### Kernel Source
+Download the kernel source from the branch of a xenial repo: \
+`git clone https://git.launchpad.net/~canonical-kernel/ubuntu/+source/linux-joule`
+
+### Building the kernel
+#### Build Environment:
+    `sudo apt-get build-dep linux-image-$(uname -r)`
+If above command doesn’t work for Joule kernel branch; manually install required build tools as below
+```
+sudo apt-get install build-essential git
+sudo apt-get install kernel-wedge
+sudo apt-get install libssl-dev ncurses-dev xz-utils kernel-package
+````
+#### Modify the Configuration:
+```
+    chmod a+x debian/rules
+    chmod a+x debian/scripts/*
+    chmod a+x debian/scripts/misc/*
+    fakeroot debian/rules clean
+    fakeroot debian/rules editconfigs # you need to go through each (Y, Exit, Y, Exit...) or get a complaint about config later
+```
+### Trigger the kernel build:
+Change your working directory to the root of the kernel source tree and then type the following commands:
+fakeroot debian/rules clean
+## quicker build:
+`fakeroot debian/rules binary-headers binary-joule binary-perarch`
+If the build is successful, a set of five.deb binary package files will be produced in the directory above the build root directory. For example after building a kernel with version "4.4.0-1000.1" on an amd64
+system, these five .deb packages would be produced:
+```
+cd ..
+ls *.deb
+linux-headers-4.4.0-1000-joule_4.4.0-1000.1_amd64.deb
+linux-joule-headers-4.4.0-1000_4.4.0-1000.1_amd64.deb
+linux-image-4.4.0-1000-joule_4.4.0-1000.1_amd64.deb
+linux-tools-4.4.0-1000-joule_4.4.0-1000.1_amd64.deb
+linux-joule-tools-4.4.0-1000_4.4.0-1000.1_amd64.deb
+```
+On later releases you will also find a linux-extra- package which you should also install if present.
+
+#### Testing the new Kernel
+Install the five-package set (on your Joule Platform) with dpkg -i and then reboot:
+```
+sudo dpkg -i linux*.deb
+sudo reboot
+```
