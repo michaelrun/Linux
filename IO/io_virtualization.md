@@ -12,4 +12,7 @@ An `emulated-IO` is for example the virtual Ethernet Controller that you will fi
 It's not exactly a copy of the same device.\
 The goal of the PCI-SIG SR-IOV specification is to standardize on a way of bypassing the VMM’s involvement in data movement by providing independent memory space, interrupts, and DMA streams for each virtual machine. SR-IOV architecture is designed to allow a device to support multiple Virtual Functions (VFs) and much attention was placedon minimizing the hardware cost of each additional function. SR-IOV introduces two new function types:\
 `Physical Functions (PFs)`:These are full PCIe functions that include the SR-IOV Extended Capability. The capability is used to configure and manage the SR-IOV functionality.\
-`Virtual Functions (VFs)`: These are ‘lightweight’ PCIe functions that contain the resources necessary for data movement but have a carefully minimized set of configuration resources.\
+`Virtual Functions (VFs)`: These are ‘lightweight’ PCIe functions that contain the resources necessary for data movement but have a carefully minimized set of configuration resources.
+
+
+[What is the difference between virtio, emulated-IO, direct I/O, I/O passthrough, SR-IOV?](https://stackoverflow.com/questions/26581343/what-is-the-difference-between-virtio-emulated-io-direct-i-o-i-o-passthrough)
