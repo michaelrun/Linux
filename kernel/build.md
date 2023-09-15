@@ -171,3 +171,7 @@ Enter the CentOS VM, install following packages
 In CentOS VM, use following command to generate initrd image for kernel version 5.14.21+:
 
 `dracut -v -m "nfs network base" --add-drivers "nfs nfsv4" --force-drivers "mfd-core idpf" initrd.img 5.14.21+`
+
+
+# build issues
+[Compiling older Linux Kernels can fail with load BTF from vmlinux: invalid argument](https://devkernel.io/posts/pahole-error/)
