@@ -9,6 +9,9 @@ Registration status has been set to completed status.
 pckid_retrieval.csv has been generated successfully!
 ```
 
+![image](https://github.com/michaelrun/Linux/assets/19384327/5aa0377c-a747-4ee9-a87a-134741b6776e)
+
+
 :exclamation: In above test, linux-sgx use tag sgx_2.19, but built SGXDataCenterAttestationPrimitives seperately with tag DCAP_1.19, since DCAP_1.16 which linux_src sgx_2.19 depends on
 
 :exclamation: DCAP_1.16 can not work with sgx_2.19 
@@ -34,6 +37,8 @@ root@scg-sprxx:/home/user01/src/SGXDataCenterAttestationPrimitives/tools/PccsAdm
 root@scg-spr05:/home/guoqing/src/SGXDataCenterAttestationPrimitives/tools/PccsAdminTool# ./pccsadmin.py collect -d . -o platform_list.json
 platform_list.json  saved successfully.
 ```
+![image](https://github.com/michaelrun/Linux/assets/19384327/df7bca00-dfe9-40a7-9088-b9367c6006b0)
+
 ###  Fetch platform collateral data from Intel PCS based on the registration data
 `./pccsadmin.py fetch [-h] [-u URL] [-i INPUT_FILE] [-o OUTPUT_FILE]` 
 ```
@@ -172,6 +177,7 @@ platform_collaterals.json  saved successfully.
 
 root@scg-sprxx:/home/user01/src/SGXDataCenterAttestationPrimitives/tools/PccsAdminTool#
 ```
+![image](https://github.com/michaelrun/Linux/assets/19384327/35b55531-83f9-4f39-9a47-9018f1fc4f0c)
 
 
 
@@ -198,8 +204,8 @@ Collaterals uploaded successfully.
 
 Sqlite3 ./pckcache.db
 
-
 ```
+![image](https://github.com/michaelrun/Linux/assets/19384327/664a04ee-b70c-4b3d-94d1-cebc689f77c8)
 
 ### Now it is ready to generate quote
 ```
@@ -216,6 +222,7 @@ sgx_qe_cleanup_by_policy is valid in in-proc mode only.
 
  Clean up the enclave load policy:succeed!
 ```
+![image](https://github.com/michaelrun/Linux/assets/19384327/bc38d4ca-e6a9-424f-905e-ae21546a9ed7)
 
 
 ### Verify Quote
@@ -238,7 +245,7 @@ Untrusted quote verification:
         Info: Advisory ID: INTEL-SA-00837
 
 ````
-
+![image](https://github.com/michaelrun/Linux/assets/19384327/9a847304-7723-4131-a082-ae0bac98237e)
 
 
 :memo:        | You check PCCS log to confirm above actions
