@@ -220,3 +220,10 @@ Applying the following patch to `scripts/pahole-flags.sh` will achieve enabling 
 +
  echo ${extra_paholeopt}
 ```
+
+# install kernel modules to location we specify
+```
+export STG_MYKMODS=../staging/rootfs/my_kernel_modules
+make INSTALL_MOD_PATH=${STG_MYKMODS} modules_install
+```
+
