@@ -4,6 +4,16 @@ git clone https://github.com/redis/redis.git
 git fetch origin pull/13139/head:upstream
 git checkout upstream
 ```
+
+# check netowrk card speed/usage/description
+```
+nload -m
+ethtool enp1s0
+sar -n DEV --iface eno1
+```
+![image](https://github.com/michaelrun/Linux/assets/19384327/f98000c3-adcf-47d7-8a3d-318d129e19ef)
+
+
 # check distribution of ubuntu
 Change the "Distribution" to the codename of the version of Ubuntu you're using, e.g. focal in Ubuntu 20.04 or it's displayed by `lsb_release -sc`
 
