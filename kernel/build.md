@@ -1,3 +1,6 @@
+# kernel source code download
+```https://cdn.kernel.org/pub/linux/kernel/v5.x/```
+
 # build kernel of ubuntu
 [KernelBuild](https://kernelnewbies.org/KernelBuild)
 # build kernel
