@@ -327,3 +327,40 @@ wait
 
 echo "Performance statistics captured successfully."
 ```
+
+
+# capture and parse htop statistics
+```
+#!/bin/bash
+
+# Duration of monitoring in seconds
+duration=60
+
+# Output directory
+output_dir="performance_statistics"
+
+# Create output directory if it doesn't exist
+mkdir -p "$output_dir"
+
+# Function to capture htop output filtered for redis
+capture_htop() {
+    htop -d $duration -C | grep redis > "$output_dir/htop_redis_data.txt"
+}
+
+# Function to parse the captured htop output for human-readable information
+parse_htop_output() {
+    echo "Top Redis Processes:"
+    echo "  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND"
+    cat "$output_dir/htop_redis_data.txt" | awk '{printf "%5s %-8s %3s %3s %8s %8s %8s %1s %6s %6s %8s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12}'
+}
+
+# Capture htop output filtered for redis
+echo "Capturing htop output filtered for Redis processes for $duration seconds..."
+capture_htop
+
+# Parse the captured htop output for human-readable information
+parse_htop_output
+
+echo "Performance statistics captured successfully."
+
+```
