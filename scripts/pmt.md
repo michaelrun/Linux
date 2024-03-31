@@ -126,6 +126,22 @@ capture_nload_stats() {
     nload -t $duration > "$output_dir/nload_data.txt" &
 }
 
+# Function to capture statistics using sysdig
+capture_sysdig_stats() {
+    sysdig -W $duration -w "$output_dir/sysdig_capture.scap" &
+}
+
+# Function to capture statistics using glances
+capture_glances_stats() {
+    glances -t $interval -f "$output_dir/glances_data.csv" &
+}
+
+# Function to capture statistics using atop
+capture_atop_stats() {
+    atop -w "$output_dir/atop_data.txt" $interval $duration &
+}
+
+
 # Start capturing statistics from all tools
 echo "Capturing performance statistics for $duration seconds..."
 
@@ -152,6 +168,11 @@ capture_sar_w_stats
 capture_sar_R_stats
 capture_sar_v_stats
 capture_nload_stats
+
+capture_iotop_stats
+capture_sysdig_stats
+capture_glances_stats
+capture_atop_stats
 
 # Wait for all processes to finish
 wait
