@@ -16,3 +16,8 @@ Error: Unable to find a match: centos-release-scl
 ```
 The solution turned out to be a simple one. Update the libmodulemd first to correct the problem then perform the dnf updates as usual.\
 `dnf update libmodulemd`
+
+
+# install  gcc-toolset-*-toolchain on centos 8
+
+lookup names of available package names with `dnf list gcc-toolset-*-toolchain` and installed it like this `dnf install gcc-toolset-10-toolchain`
