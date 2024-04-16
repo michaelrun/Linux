@@ -1,3 +1,4 @@
+[GCC LTO](https://www.slideshare.net/chimerawang/gcc-lto)
 <img width="1033" alt="image" src="https://github.com/michaelrun/Linux/assets/19384327/9bf150ce-6af0-468d-b06d-82f81e063482">
 
 
