@@ -1,4 +1,7 @@
-[GCC LTO](https://www.slideshare.net/chimerawang/gcc-lto)
+[GCC LTO](https://www.slideshare.net/chimerawang/gcc-lto)\
+[Link Time Optimization (LTO),C++/D cross-language optimization](https://johanengelen.github.io/ldc/2016/11/10/Link-Time-Optimization-LDC.html)\
+[Does LTO works when compiling with GCC but linking with LLVM LLD?](https://stackoverflow.com/questions/58084395/does-lto-works-when-compiling-with-gcc-but-linking-with-llvm-lld)
+
 <img width="1033" alt="image" src="https://github.com/michaelrun/Linux/assets/19384327/9bf150ce-6af0-468d-b06d-82f81e063482">
 
 
