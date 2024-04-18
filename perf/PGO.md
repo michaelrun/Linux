@@ -16,3 +16,29 @@ Important note about C++11/C++14: The boost libraries do not offer a stable ABI 
 Important note about the C++ standard library: Much like the C++11 issues, it is again critical that all three components (your application, boost, and the C++ driver) be built against the same C++ runtime library. You cannot mix components that have linked against libc++ with those that have linked against libstdc++.
 
 https://mongocxx.org/legacy-v1/installation/
+
+
+# test linker options
+C:
+```
+                    #include <stdlib.h>
+                    #include <stdio.h>
+                    int main() {
+                        printf("Hello, World!");
+                        return EXIT_SUCCESS;
+                    }
+```
+C++:
+```
+                    #include <iostream>
+                    #include <cstdlib>
+                    int main() {
+                        std::cout << "Hello, World!" << std::endl;
+                        return EXIT_SUCCESS;
+                    }
+```
+use different linker:
+```
+gcc -fuse-ld=lld -flto -o test test.c
+gcc -fuse-ld=gold -flto -o test test.c
+```
