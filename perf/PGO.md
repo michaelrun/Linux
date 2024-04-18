@@ -42,3 +42,12 @@ use different linker:
 gcc -fuse-ld=lld -flto -o test test.c
 gcc -fuse-ld=gold -flto -o test test.c
 ```
+
+# how to build mongodb with LTO
+gcc:\
+`python3 buildscripts/scons.py LINKFLAGS="-fuse-ld=gold" --lto --opt=on --release=RELEASE -j 56 --disable-warnings-as-errors install-core MONGO_VERSION=4.4.19 `\
+clang:\
+`python3 buildscripts/scons.py CC=clang CXX=clang++ --lto --opt=on --release=RELEASE -j 56 --disable-warnings-as-errors install-core MONGO_VERSION=4.4.19 `
+
+`clang` use the linker: `lld`, but `gcc` can't use linker `lld`, maybe `lld` don't recognize `gcc` `lto` options, but `gcc` needs to use `gold`
+
