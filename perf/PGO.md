@@ -51,3 +51,7 @@ clang:\
 
 `clang` use the linker: `lld`, but `gcc` can't use linker `lld`, maybe `lld` don't recognize `gcc` `lto` options, but `gcc` needs to use `gold`
 
+# mount /tmp
+```
+ mount -t tmpfs -o size=50G,mode=1777 overflow /tmp
+```
