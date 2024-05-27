@@ -7,3 +7,13 @@ numactl -N 1 -m 1 perf script | ./FlameGraph/stackcollapse-perf.pl | ./FlameGrap
 ```
 ldconfig -p
 ```
+# yum
+```
+sudo dnf install yum-utils
+yum repolist enabled
+sudo dnf config-manager --set-enabled crb
+dnf repolist
+sudo dnf install epel-release
+sudo dnf install epel-next-release
+
+```
