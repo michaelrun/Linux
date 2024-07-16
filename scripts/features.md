@@ -23,7 +23,8 @@ To disable:\
 
 # check all C-state
 `turbostat --show sysfs --quiet sleep 10`
-output like:\
+
+output like:
 ```
 10.029123 sec
 POLL    C1      C1E     C6      POLL%   C1%     C1E%    C6%
