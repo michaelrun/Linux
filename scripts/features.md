@@ -10,3 +10,13 @@ The easiest way to check if SMT (generic for HT, which is just Intel branding) i
 gives you 0 for inactive or 1 for active.\
 You can actually turn it on or off at runtime with:\
 `echo [on|off] > /sys/devices/system/cpu/smt/control`
+
+# check or enable/disable turbo
+```
+cat /sys/devices/system/cpu/intel_pstate/no_turbo
+```
+`0` if turbo is enabled;
+
+`1` if turbo is disabled.
+To disable:\
+ `echo '1' >/sys/devices/system/cpu/intel_pstate/no_turbo`
