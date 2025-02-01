@@ -1,4 +1,4 @@
-# Assign CPU scripts
+# Bind NIC Interrupts to CPU Cores
 ```
 #!/bin/bash
 
