@@ -44,9 +44,9 @@ if [[ $# -lt 2 ]]; then
     echo "  CPU_LIST: Comma-separated list of CPU cores (e.g., 0,1,2,3)"
     exit 1
 fi
+```
 
 # Assign CPU
-
 ```
 #!/bin/bash
 
@@ -199,10 +199,4 @@ case $policy in
 esac
 
 echo "Selected CPU cores: ${selected_cores[*]}"
-```
-
-nic_name=$1
-cpu_list=($(echo "$2" | tr ',' ' '))
-
-bind_nic_interrupts "$nic_name" "${cpu_list[*]}"
 ```
