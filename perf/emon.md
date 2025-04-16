@@ -227,3 +227,135 @@ struct { int val; char pad[60]; } counter[4]; // Separate lines
 3. **Fix with padding, NUMA, and lock-free algorithms**.  
 
 Would you like help analyzing a specific HITM-heavy workload?
+
+Here’s a structured summary of the **CPU performance metrics** you’ve referenced earlier, along with their **experience-based thresholds** for quick identification of bottlenecks:
+
+---
+
+### **1. Cache Miss Metrics**
+#### **(a) `metric_L1D MPI` (L1 Data Cache Misses per Instruction)**
+- **Metric**:  
+  ```xml
+  <metric name="metric_L1D MPI (includes data+rfo w/ prefetches)">
+    <event alias="a">L1D.REPLACEMENT</event>
+    <event alias="b">INST_RETIRED.ANY</event>
+    <formula>a/b</formula>
+  </metric>
+  ```
+- **Thresholds**:  
+  - **< 0.05** ✅ (Good)  
+  - **0.05–0.1** ⚠️ (Investigate)  
+  - **> 0.1** ❌ (Poor, optimize data locality)  
+
+#### **(b) `metric_L2 MPI` (L2 Cache Misses per Instruction)**
+- **Metric**:  
+  ```xml
+  <metric name="metric_L2 MPI (includes code+data+rfo w/ prefetches)">
+    <event alias="a">L2_LINES_IN.ALL</event>
+    <event alias="b">INST_RETIRED.ANY</event>
+    <formula>a/b</formula>
+  </metric>
+  ```
+- **Thresholds**:  
+  - **< 0.02** ✅ (Good)  
+  - **0.02–0.05** ⚠️ (Check prefetching/data layout)  
+  - **> 0.05** ❌ (Thrashing, false sharing likely)  
+
+#### **(c) `metric_L3 MPI` (L3/LLC Misses per Instruction)**
+- **Typical Events**: `LLC_MISSES.ANY / INST_RETIRED.ANY`  
+- **Thresholds**:  
+  - **< 0.005** ✅ (Working set fits in LLC)  
+  - **0.005–0.01** ⚠️ (NUMA/bandwidth may bottleneck)  
+  - **> 0.01** ❌ (Excessive DRAM access)  
+
+---
+
+### **2. Cache Coherence Metrics**
+#### **(a) `metric_L2 Any local request that HITM in a sibling core`**
+- **Metric**:  
+  ```xml
+  <metric name="metric_L2 Any local request that HITM in a sibling core">
+    <event alias="a">OCR.READS_TO_CORE.L3_HIT.SNOOP_HITM</event>
+    <event alias="b">INST_RETIRED.ANY</event>
+    <formula>a/b</formula>
+  </metric>
+  ```
+- **Thresholds**:  
+  - **< 0.001** ✅ (Low contention)  
+  - **0.001–0.01** ⚠️ (Check false sharing)  
+  - **> 0.01** ❌ (Severe coherence storms)  
+
+#### **(b) RFOs per Instruction**
+- **Typical Events**: `L1D.REPLACEMENT:DEMAND_RFO / INST_RETIRED.ANY`  
+- **Thresholds**:  
+  - **< 0.005** ✅ (Minimal store overhead)  
+  - **0.005–0.02** ⚠️ (Optimize write batching)  
+  - **> 0.02** ❌ (Use non-temporal stores)  
+
+---
+
+### **3. Memory Bandwidth Metrics**
+#### **(a) DRAM Bandwidth Utilization**
+- **Metric**: `UNC_M_CAS_COUNT.RD + WR / Time`  
+- **Thresholds**:  
+  - **< 50%** ✅ (Underutilized)  
+  - **50–80%** ⚠️ (Healthy)  
+  - **> 80%** ❌ (Saturated, may throttle)  
+
+#### **(b) NUMA Remote Access Ratio**
+- **Metric**: `UNC_M_REMOTE_ACCESS / UNC_M_LOCAL_ACCESS`  
+- **Thresholds**:  
+  - **< 10%** ✅ (Good locality)  
+  - **10–30%** ⚠️ (Optimize thread placement)  
+  - **> 30%** ❌ (Bind threads to NUMA nodes)  
+
+---
+
+### **4. Core Efficiency Metrics**
+#### **(a) IPC (Instructions per Cycle)**
+- **Metric**: `INST_RETIRED.ANY / CPU_CLK_UNHALTED.THREAD`  
+- **Thresholds**:  
+  - **> 2.0** ✅ (Excellent, Skylake+)  
+  - **1.0–2.0** ⚠️ (Workload-dependent)  
+  - **< 1.0** ❌ (Stalled, check cache/branching)  
+
+#### **(b) Frontend Bound**
+- **Metric**: `IDQ_UOPS_NOT_DELIVERED.CORE / SLOTS`  
+- **Thresholds**:  
+  - **< 10%** ✅ (Good)  
+  - **10–30%** ⚠️ (I-cache/branch issues)  
+  - **> 30%** ❌ (Decode bottlenecks)  
+
+---
+
+### **5. Prefetching Efficiency**
+#### **(a) L2 Hardware Prefetch Hit Rate**
+- **Metric**: `L2_PREFETCHES.USEFUL / L2_PREFETCHES.ISSUED`  
+- **Thresholds**:  
+  - **> 60%** ✅ (Effective)  
+  - **30–60%** ⚠️ (Tune prefetch distance)  
+  - **< 30%** ❌ (Disable prefetcher if noisy)  
+
+---
+
+### **Quick Reference Table**
+| Metric Type           | Metric Name                          | Good | Warning | Critical |  
+|-----------------------|--------------------------------------|------|---------|----------|  
+| **L1D MPI**           | `L1D.REPLACEMENT / INST_RETIRED`     | <0.05| 0.05–0.1| >0.1     |  
+| **L2 MPI**            | `L2_LINES_IN.ALL / INST_RETIRED`     | <0.02| 0.02–0.05| >0.05   |  
+| **HITM Rate**         | `OCR.READS_TO_CORE.L3_HIT.SNOOP_HITM`| <0.001| 0.001–0.01| >0.01 |  
+| **DRAM BW Utilization**| `UNC_M_CAS_COUNT.RD+WR`              | <50% | 50–80%  | >80%     |  
+| **IPC**               | `INST_RETIRED / CPU_CLK_UNHALTED`    | >2.0 | 1.0–2.0 | <1.0     |  
+
+---
+
+### **Actionable Workflow**
+1. **Profile**: Use `perf stat -e <events>`.  
+2. **Compare**: Check against thresholds.  
+3. **Prioritize Fixes**:  
+   - High HITM? → **Fix false sharing**.  
+   - High L2 MPI? → **Optimize data layout**.  
+   - Low IPC? → **Reduce stalls (cache/branch)**.  
+4. **Re-measure**.  
+
+Would you like help correlating these metrics for a specific workload?
