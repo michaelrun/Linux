@@ -359,3 +359,96 @@ Here’s a structured summary of the **CPU performance metrics** you’ve refere
 4. **Re-measure**.  
 
 Would you like help correlating these metrics for a specific workload?
+
+### **Understanding the `metric_L2 Any local request that HIT in a sibling core and forwarded (per instr)` Metric**
+
+This metric measures the **frequency of L2 cache requests that hit a modified (M-state) or shared (S-state) cache line in a sibling core's L1/L2 and are forwarded directly** (avoiding L3/DRAM access). It reflects **efficient core-to-core data sharing** but can also indicate contention.
+
+---
+
+### **1. Key Components**
+| Component | Description |
+|-----------|-------------|
+| **`OCR.READS_TO_CORE.L3_HIT.SNOOP_HIT_WITH_FWD`** | Counts L2 requests where:<br> • The line was **valid (S/M-state)** in another core’s L1/L2.<br> • The data was **forwarded directly** (no L3/DRAM access). |
+| **`INST_RETIRED.ANY`** | Total executed instructions (normalization factor). |
+| **Formula (`a/c`)** | **Forwarded HIT rate per instruction** = Snoop hits with forwarding / instructions. |
+
+---
+
+### **2. Interpretation and Thresholds**
+#### **What Does a High Value Mean?**
+- **Efficient Sharing**: Cores reuse data without DRAM access (good for latency).  
+- **Potential Contention**: High rates may indicate frequent cross-core communication (e.g., shared counters).  
+
+#### **Experience-Based Thresholds**
+- **< 0.001/instr** ✅ (Low, healthy for most workloads).  
+- **0.001–0.01/instr** ⚠️ (Moderate, check for unnecessary sharing).  
+- **> 0.01/instr** ❌ (High, may indicate contention or false sharing).  
+
+---
+
+### **3. Comparison with HITM Metric**
+| Metric | Scenario | Data State | Performance Impact |
+|--------|----------|------------|---------------------|
+| **`SNOOP_HIT_WITH_FWD`** | Line in **S (Shared)** or **M (Modified)** in another core | Data forwarded directly between cores | Lower latency (no L3/DRAM access) |
+| **`SNOOP_HITM`** | Line in **M (Modified)** in another core | Core-to-core transfer + invalidation | Higher latency (coherence overhead) |
+
+---
+
+### **4. Optimization Strategies**
+#### **A. Reduce Unnecessary Sharing**
+- **Use thread-local storage** for private data.  
+- **Batch updates** to shared variables (reduce frequency of cross-core requests).  
+
+#### **B. Improve Locality**
+- **NUMA-aware placement**: Bind threads sharing data to cores on the same L3 domain.  
+  ```bash
+  numactl --cpunodebind=0 --membind=0 ./program
+  ```
+
+#### **C. Check for False Sharing**
+- **Pad shared data** to separate cache lines:  
+  ```c
+  struct { int x; char padding[64 - sizeof(int)]; }; // 64B alignment
+  ```
+- **Tools**: Use `perf c2c` to detect false sharing.  
+
+---
+
+### **5. Debugging Tools**
+#### **Linux `perf`**
+```bash
+# Count forwarded snoop hits
+perf stat -e OCR.READS_TO_CORE.L3_HIT.SNOOP_HIT_WITH_FWD -a -- ./program
+```
+
+#### **Intel VTune**
+- Profile **"Memory Access"** → Look for "Snoop Responses" and "Core-to-Core Transfers".  
+
+---
+
+### **6. Example Scenario**
+#### **High Forwarded HIT Rate Due to Shared Counter**
+```c
+// Shared counter (updated by all threads)
+int counter;  // Unpadded, likely in same cache line
+```
+- **Behavior**:  
+  - Threads frequently read/write `counter` → line stays in **S-state** in multiple L1 caches.  
+  - Requests trigger **`SNOOP_HIT_WITH_FWD`** (data forwarded between cores).  
+- **Fix**:  
+  ```c
+  // Per-thread counters + periodic reduction
+  __thread int local_counter;  // Thread-local storage
+  ```
+
+---
+
+### **Key Takeaways**
+1. **This metric tracks efficient core-to-core data forwarding** (avoiding L3/DRAM).  
+2. **Moderate rates are normal**, but high rates may indicate:  
+   - Unnecessary sharing (optimize with thread-local storage).  
+   - False sharing (pad data to 64B).  
+3. **Compare with `SNOOP_HITM`** to isolate coherence overhead.  
+
+Would you like help correlating this with other metrics (e.g., IPC, cache misses)?
