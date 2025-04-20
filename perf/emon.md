@@ -1487,5 +1487,95 @@ This metric measures the **rate of UPI (Ultra Path Interconnect) prefetches** is
 
 For maximum performance, **balance prefetching with NUMA locality**. 🚀
 
+### **Understanding `metric_B2CMI extra reads from XPT-UPI prefetches (per instr)`**
+
+This metric quantifies **inefficient cross-socket prefetches**—specifically, the rate of redundant or useless prefetches issued by the **B2CMI (Box-to-Core/Memory Interconnect)** that did *not* merge with actual demand requests, normalized per instruction. It helps identify wasted bandwidth in multi-socket systems.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_B2CMI_PREFCAM_INSERTS.XPT_ALLCH` (a) | Total **cross-package (XPT) prefetches** (remote socket → local cache). |
+| `UNC_B2CMI_PREFCAM_INSERTS.UPI_ALLCH` (b) | Total **UPI prefetches** (inter-socket coherence traffic). |
+| `UNC_B2CMI_PREFCAM_DEMAND_MERGE.XPT_ALLCH` (c) | XPT prefetches that **merged with a demand request** (useful). |
+| `UNC_B2CMI_PREFCAM_DEMAND_MERGE.UPI_ALLCH` (d) | UPI prefetches that **merged with a demand request** (useful). |
+| `INST_RETIRED.ANY` (e) | Total retired instructions (normalization factor). |
+
+### **Formula:**
+\[
+\text{Useless Prefetches per Instruction} = \frac{(a + b) - (c + d)}{e}
+\]
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >0.005 useless prefetches/instr)** → Significant **prefetch inefficiency**:  
+  - Prefetched data was **not used** by the core (cache pollution).  
+  - Wasted **UPI bandwidth** and **LLC space**.  
+- **Low value (e.g., ~0)** → Prefetches are **highly accurate** (most merged with demand requests).  
+
+### **Why Useless Prefetches Happen**
+1. **Over-Aggressive Prefetching**  
+   - Hardware prefetcher mispredicts access patterns (e.g., irregular strides).  
+2. **Premature Eviction**  
+   - Prefetched data is evicted from cache before use.  
+3. **NUMA-Unfriendly Workloads**  
+   - Threads access random remote memory, confusing the prefetcher.  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- **Wasted Bandwidth**: Useless prefetches consume **UPI links** and **memory controller cycles**.  
+- **Cache Pollution**: Displaces useful data, increasing misses.  
+- **Energy Overhead**: Unnecessary DRAM/UPI activation.  
+
+### **Optimization Strategies**
+1. **Tune Prefetchers**  
+   - Disable XPT/UPI prefetching in BIOS if useless prefetches dominate.  
+   - Use `MSR` settings to reduce prefetch distance (Intel).  
+2. **Improve NUMA Locality**  
+   - Bind threads to sockets (`numactl --cpunodebind`).  
+   - Allocate memory locally (`numactl --localalloc`).  
+3. **Monitor Demand Merge Rate**  
+   - Aim for high `(c + d)/(a + b)` (e.g., >80%).  
+
+---
+
+## **4. Example Scenario**
+### **High Useless Prefetches in a Multi-Socket App**
+- **Observation**:  
+  - `metric_B2CMI useless prefetches` = 0.01 (high).  
+  - `(c + d)/(a + b)` = 40% (low merge rate).  
+- **Diagnosis**:  
+  - Prefetcher is fetching remote data that is **rarely used**.  
+- **Fix**:  
+  - Reduce cross-socket traffic (partition data).  
+  - Disable UPI prefetching if metrics don’t improve.  
+
+---
+
+## **5. Comparison to Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_B2CMI_PREFCAM_INSERTS.XPT_ALLCH` | Total XPT prefetches | Raw prefetch volume. |
+| `UNC_B2CMI_PREF_HIT` | Useful prefetches | Complement to useless prefetches. |
+| `UNC_UPI_TxL_FLITS.ALL_DATA` | UPI data traffic | Includes useless prefetch traffic. |
+
+---
+
+### **Final Thoughts**
+- **Goal**: Minimize `((a + b) - (c + d))/e` (reduce useless prefetches).  
+- **Debug Tools**:  
+  - VTune’s **Memory Access analysis** to visualize prefetch accuracy.  
+  - `perf stat -e UNC_B2CMI_PREFCAM_*` for raw counts.  
+- **Trade-off**:  
+  - Aggressive prefetching helps **regular workloads** but hurts **irregular ones**.  
+
+For NUMA systems, balance prefetching with **data locality** and **bandwidth conservation**. 🚀
+
 
 
