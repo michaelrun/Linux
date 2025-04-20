@@ -1578,4 +1578,100 @@ This metric quantifies **inefficient cross-socket prefetches**—specifically, t
 For NUMA systems, balance prefetching with **data locality** and **bandwidth conservation**. 🚀
 
 
+### **Understanding `metric_memory extra write b/w due to directory updates (MB/sec)`**
+
+This metric quantifies the **additional memory write bandwidth consumed by directory coherence updates** in Intel's Caching Home Agent (CHA) and B2CMI (Box-to-Core/Memory Interconnect). It reflects the overhead of maintaining cache coherency in multi-core/socket systems.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_CHA_DIR_UPDATE.HA` (a) | Directory updates from the **Home Agent** (local socket coherency). |
+| `UNC_CHA_DIR_UPDATE.TOR` (b) | Directory updates from the **Tracker Occupancy Register** (demand requests). |
+| `UNC_B2CMI_DIRECTORY_UPDATE.ANY` (c) | Directory updates from **cross-socket (NUMA) coherency traffic**. |
+
+### **Formula:**
+\[
+\text{Directory Write BW (MB/sec)} = \frac{(a + b + c) \times 64}{1,000,000}
+\]
+- **`64`**: Cache line size (bytes).  
+- **`1,000,000`**: Converts bytes to MB.  
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >500 MB/sec)** → Significant coherency overhead due to:  
+  - **Frequent shared writes** (false sharing, atomics).  
+  - **Cross-socket traffic** (NUMA-unfriendly access).  
+- **Low value (e.g., <100 MB/sec)** → Efficient coherency (mostly private data).  
+
+### **Why Directory Updates Consume Bandwidth**
+1. **Writeback Overhead**  
+   - When a cache line transitions from **Modified (M)** to **Shared (S)** or **Invalid (I)**, the directory must be updated.  
+2. **NUMA Penalty**  
+   - Cross-socket directory updates (`UNC_B2CMI_DIRECTORY_UPDATE.ANY`) use **UPI bandwidth**.  
+3. **Atomic Operations**  
+   - `LOCK` prefixes or `CAS` trigger directory writes.  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- **Memory Bandwidth Saturation**: Directory updates compete with application data.  
+- **Increased Latency**: Coherency stalls slow down writes.  
+- **NUMA Scalability**: Cross-socket updates degrade performance.  
+
+### **Optimization Strategies**
+1. **Reduce False Sharing**  
+   - Pad shared variables to cache lines:  
+     ```c
+     alignas(64) int padded_data[THREADS];  // 64-byte alignment
+     ```
+2. **Minimize Atomic Operations**  
+   - Replace `atomic_inc` with **thread-local counters**.  
+3. **Improve NUMA Locality**  
+   - Use `numactl --localalloc` to keep memory local.  
+4. **Monitor Complementary Metrics**  
+   - `UNC_CHA_SNOOP_RESP.HITM` (modified line snoops).  
+   - `UNC_UPI_TxL_FLITS.NON_DATA` (coherency traffic).  
+
+---
+
+## **4. Example Scenario**
+### **High Directory BW in a Multi-Threaded App**
+- **Observation**:  
+  - `metric_memory extra write b/w` = 800 MB/sec.  
+  - `UNC_B2CMI_DIRECTORY_UPDATE.ANY` dominates (`c`).  
+- **Diagnosis**:  
+  - Threads on Socket 0 frequently write to shared data owned by Socket 1.  
+- **Fix**:  
+  - Partition data by socket (sharding).  
+  - Use `numactl --cpunodebind` to bind threads.  
+
+---
+
+## **5. Comparison to Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_CHA_DIR_LOOKUP.SNP` | Snoop-triggering lookups | Coherency probes. |  
+| `UNC_CHA_TOR_INSERTS.IA_MISS_RFO` | RFO misses | Write contention. |  
+| `UNC_UPI_TxL_FLITS.ALL_DATA` | UPI data traffic | Includes directory updates. |  
+
+---
+
+### **Final Thoughts**
+- **Goal**: Minimize `(a + b + c)` to reduce coherency overhead.  
+- **Debug Tools**:  
+  - **`perf c2c`**: Detect false sharing.  
+  - **VTune Memory Analysis**: Profile NUMA access patterns.  
+- **Trade-off**:  
+  - **Write-heavy workloads** inherently generate more directory traffic.  
+
+For optimal performance, **balance coherency overhead with data locality**. 🚀
+
+
+
 
