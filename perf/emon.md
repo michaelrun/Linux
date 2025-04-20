@@ -1673,5 +1673,94 @@ This metric quantifies the **additional memory write bandwidth consumed by direc
 For optimal performance, **balance coherency overhead with data locality**. 🚀
 
 
+### **1. What is the TOR (Tracker Occupancy Register)?**
+The **TOR (Tracker Occupancy Register)** is a hardware structure in Intel's **Caching Home Agent (CHA)** that tracks pending memory requests (e.g., loads, stores, prefetches) to manage cache coherence and memory access ordering.  
+
+#### **Key Roles of the TOR:**
+- **Request Tracking**:  
+  - Monitors outstanding cache misses, RFOs (Read-For-Ownership), and prefetches.  
+  - Ensures correct ordering of memory operations (e.g., prevents race conditions).  
+- **Resource Management**:  
+  - Limits the number of concurrent requests to avoid overloading the memory subsystem.  
+- **Coherency Participation**:  
+  - Helps resolve conflicts when multiple cores request the same cache line.  
+
+#### **Relationship to `UNC_CHA_DIR_UPDATE.TOR`:**
+- The `UNC_CHA_DIR_UPDATE.TOR` event counts directory updates triggered by **demand requests** tracked by the TOR (e.g., cache misses needing coherency actions).  
+
+---
+
+### **2. Directory Update Events: Local vs. Remote**
+#### **`UNC_CHA_DIR_UPDATE.HA` (Home Agent)**
+- **Scope**: **Local socket** (intra-socket coherency).  
+- **Triggered by**:  
+  - Core-local cache line state changes (e.g., `M` → `S`, `E` → `I`).  
+  - Snoops from other cores *within the same socket*.  
+- **Example**:  
+  ```c
+  // Thread 0 (Core 0) writes to a cache line shared with Thread 1 (Core 1, same socket).
+  // Directory updates are recorded in `UNC_CHA_DIR_UPDATE.HA`.
+  ```
+
+#### **`UNC_B2CMI_DIRECTORY_UPDATE.ANY` (B2CMI)**
+- **Scope**: **Cross-socket** (inter-socket coherency via UPI).  
+- **Triggered by**:  
+  - Remote socket accesses (e.g., a core on Socket 0 reads a line owned by Socket 1).  
+  - NUMA-unfriendly workloads.  
+- **Example**:  
+  ```c
+  // Thread 0 (Socket 0) writes to a cache line owned by Socket 1.
+  // Directory updates are recorded in `UNC_B2CMI_DIRECTORY_UPDATE.ANY`.
+  ```
+
+#### **Key Difference:**
+| **Event**                          | **Scope**       | **Traffic Type**               |  
+|------------------------------------|-----------------|--------------------------------|  
+| `UNC_CHA_DIR_UPDATE.HA`            | Local socket    | Intra-socket coherency         |  
+| `UNC_B2CMI_DIRECTORY_UPDATE.ANY`   | Remote socket   | Inter-socket (UPI) coherency   |  
+
+---
+
+### **3. Why This Matters for Performance**
+#### **Optimization Guidelines**
+1. **Reduce `UNC_B2CMI_DIRECTORY_UPDATE.ANY` (Remote Updates)**  
+   - Use **NUMA-aware allocation** (`numactl --localalloc`).  
+   - Partition data by socket (e.g., sharded databases).  
+
+2. **Minimize `UNC_CHA_DIR_UPDATE.TOR` (Demand-Induced Updates)**  
+   - Avoid false sharing (pad shared variables to cache lines).  
+   - Replace atomic operations with thread-local accumulators.  
+
+3. **Monitor `UNC_CHA_DIR_UPDATE.HA` (Local Overhead)**  
+   - High values indicate intra-socket contention (e.g., core-to-core sharing).  
+
+---
+
+### **4. Example Scenario**
+#### **High Remote Directory Updates**
+- **Observation**:  
+  - `UNC_B2CMI_DIRECTORY_UPDATE.ANY` dominates.  
+  - `metric_memory extra write b/w` is high (~1 GB/sec).  
+- **Diagnosis**:  
+  - Threads on Socket 0 frequently write to memory allocated on Socket 1.  
+- **Fix**:  
+  - Bind threads to their local socket (`numactl --cpunodebind`).  
+  - Replicate read-only data.  
+
+---
+
+### **Summary**
+- **TOR**: Tracks pending memory requests to manage coherency.  
+- **`UNC_CHA_DIR_UPDATE.HA`**: Local socket directory updates.  
+- **`UNC_B2CMI_DIRECTORY_UPDATE.ANY`**: Cross-socket directory updates (NUMA overhead).  
+- **Actionable Insight**:  
+  - Minimize remote updates for NUMA scalability.  
+  - Use `perf c2c` or VTune to diagnose false sharing.  
+
+For deep dives, consult Intel’s *Uncore Performance Monitoring Guide*. 🚀
+
+
+
+
 
 
