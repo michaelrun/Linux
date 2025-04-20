@@ -654,3 +654,98 @@ This metric measures the **rate of cache coherence conflicts** (snoop responses 
 - **Fix**: Pad data, reduce atomics, optimize NUMA.  
 
 For deep dives, check **Intel’s Optimization Manual** or use `perf c2c` to detect false sharing. 🚀
+
+
+### **Understanding `metric_HA directory lookups that spawned a snoop (per instr)`**
+
+This metric quantifies **how often directory lookups in the Caching Home Agent (CHA) trigger snoop requests to other cores/sockets**, normalized per instruction. It measures **coherency overhead** in multi-core/multi-socket systems, helping identify contention in shared memory workloads.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_CHA_DIR_LOOKUP.SNP` (a) | Counts directory lookups that **required a snoop** (e.g., another core held the cache line in Modified/Shared state). |
+| `INST_RETIRED.ANY` (b) | Total retired instructions (normalizes the metric). |
+
+### **Formula:**
+\[
+\text{Snoop-Triggering Directory Lookups per Instruction} = \frac{a}{b}
+\]
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >0.01 snoops/instruction)** → Significant **cross-core/cross-socket sharing** (coherency bottleneck).  
+- **Low value (e.g., <0.001 snoops/instruction)** → Mostly private data (minimal coherency overhead).  
+
+### **Common Causes of High Snoop Rates**
+1. **True/False Sharing**  
+   - Multiple cores **write to the same cache line** (e.g., a shared counter or array).  
+   - **Fix**: Pad data to separate cache lines (`alignas(64)`).  
+
+2. **NUMA-Unfriendly Access**  
+   - Threads on different sockets access **remote shared data**.  
+   - **Fix**: Use `numactl --localalloc` or partition data by socket.  
+
+3. **Atomic Operations**  
+   - `atomic_add`, `CAS` (Compare-And-Swap) force snoops.  
+   - **Fix**: Replace with thread-local accumulators.  
+
+4. **Inefficient Locking**  
+   - High contention on spinlocks/mutexes.  
+   - **Fix**: Use finer-grained locks or lock-free algorithms.  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- Each snoop adds **latency** (core stalls waiting for coherency resolution).  
+- High snoop rates **serialize parallel workloads** and **increase UPI traffic** (in multi-socket systems).  
+
+### **Optimization Strategies**
+1. **Reduce Sharing**  
+   - Use **thread-local storage** for temporary data.  
+   - **Pad hot variables** to avoid false sharing.  
+
+2. **NUMA Optimizations**  
+   - Bind threads to sockets (`taskset`, `numactl`).  
+   - Allocate memory locally (`numactl --localalloc`).  
+
+3. **Replace Atomics**  
+   - Use per-thread counters + merge results later.  
+
+4. **Monitor Snoop Types**  
+   - Check `UNC_CHA_SNOOP_RESP.HITM` (snoops where another core had modified data) for severe cases.  
+
+---
+
+## **4. Example Scenario**
+### **High Snoops in a Shared Hash Table**
+- **Observation**: `metric_HA directory lookups that spawned a snoop` = 0.02.  
+- **Diagnosis**:  
+  - Threads on different cores frequently access **the same hash buckets**.  
+- **Fix**:  
+  - Use **per-thread sharding** (e.g., separate hash tables per core).  
+  - Pad bucket entries to **avoid false sharing**.  
+
+---
+
+## **5. Comparison to Related Metrics**
+| **Metric** | **What It Measures** | **Related To** |
+|------------|----------------------|----------------|
+| `UNC_CHA_DIR_LOOKUP.SNP` | Snoops triggered by directory lookups | Coherency overhead |
+| `UNC_CHA_SNOOP_RESP.HITM` | Snoops where data was modified | Severe coherency stalls |
+| `metric_HA conflict responses per instr` | Snoop responses due to conflicts | False sharing, atomics |
+| `UNC_UPI_TxL_FLITS.NON_DATA` | UPI control traffic (snoop-related) | Cross-socket coherency cost |
+
+---
+
+### **Final Thoughts**
+- This metric is **critical for scalability** in multi-core/socket systems.  
+- **>0.01 snoops/instruction** indicates a bottleneck.  
+- **Solutions**: Reduce sharing, optimize NUMA, replace atomics.  
+
+For deep analysis, use **`perf c2c` (Linux) to detect false sharing** or Intel VTune’s **Memory Access analysis**. 🚀
