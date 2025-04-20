@@ -1397,3 +1397,95 @@ Hardware prefetchers in modern CPUs fetch data from **different levels of the me
 - **`likwid-perfctr`**: Measure cache/prefetch stats (HPC).  
 
 Prefetchers are powerful but imperfect. Balance them with **software prefetching** and **NUMA optimizations** for peak performance. 🚀
+
+
+### **Understanding `metric_M3UPI UPI prefetches (per instr)`**
+
+This metric measures the **rate of UPI (Ultra Path Interconnect) prefetches** issued by the **B2CMI (Box-to-Core/Memory Interconnect)** per retired instruction. These prefetches aim to reduce latency by proactively fetching data from **remote sockets** over the UPI link in multi-socket Intel systems.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_B2CMI_PREFCAM_INSERTS.UPI_ALLCH` (a) | Counts **UPI prefetches** that target *all* cache levels (L1/L2/LLC). |
+| `INST_RETIRED.ANY` (c) | Total retired instructions (normalizes the metric). |
+
+### **Formula:**
+\[
+\text{UPI Prefetches per Instruction} = \frac{a}{c}
+\]
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >0.01 prefetches/instr)** → Significant **cross-socket prefetching activity**, indicating:  
+  - Frequent **remote memory access** (NUMA overhead).  
+  - The hardware prefetcher is aggressively trying to hide remote latency.  
+- **Low value (e.g., <0.001 prefetches/instr)** → Mostly **local memory access** (minimal cross-socket prefetching).  
+
+### **How UPI Prefetches Work**
+1. **Trigger**:  
+   - A core on Socket 0 misses a cache line that resides in **Socket 1's memory**.  
+2. **Action**:  
+   - The **B2CMI prefetcher** issues a UPI request to prefetch the line into the **local LLC/L2**.  
+3. **Goal**:  
+   - Hide the latency of remote DRAM accesses (~100–200 ns vs. ~10 ns for local cache hits).  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- **Benefits**:  
+  - Reduces **stall time** for remote memory accesses.  
+  - Improves throughput in **NUMA-aware workloads**.  
+- **Drawbacks**:  
+  - **Wastes UPI bandwidth** if prefetches are incorrect.  
+  - **Cache pollution** if prefetched data isn’t used.  
+
+### **Optimization Strategies**
+1. **Improve NUMA Locality**  
+   - Use `numactl --localalloc` to minimize remote accesses.  
+   - Partition data by socket (e.g., sharded databases).  
+2. **Tune Prefetchers**  
+   - Disable UPI prefetching if it causes pollution (BIOS/`MSR` settings).  
+3. **Monitor Effectiveness**  
+   - Check `UNC_B2CMI_PREF_HIT` (prefetch hits) vs. `UNC_B2CMI_PREF_MISS`.  
+
+---
+
+## **4. Example Scenario**
+### **High UPI Prefetches in a Multi-Socket Workload**
+- **Observation**: `metric_M3UPI UPI prefetches` = 0.05.  
+- **Diagnosis**:  
+  - Threads on Socket 0 frequently access memory allocated on Socket 1.  
+- **Fix**:  
+  - Bind threads to sockets (`numactl --cpunodebind`).  
+  - Replicate read-only data locally.  
+
+---
+
+## **5. Comparison to Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_B2CMI_PREFCAM_INSERTS.XPT_ALLCH` | Cross-package (XPT) prefetches | Similar to UPI prefetches but broader scope. |
+| `UNC_UPI_TxL_FLITS.ALL_DATA` | UPI data traffic | Prefetches contribute to this. |
+| `UNC_CHA_TOR_INSERTS.IA_MISS_REMOTE` | Remote LLC misses | UPI prefetches try to mitigate these. |
+
+---
+
+### **Final Thoughts**
+- **Ideal Use Case**:  
+  - NUMA-optimized workloads where **predictable remote access** occurs.  
+- **Red Flags**:  
+  - High UPI prefetches + low cache hit rate → **Inefficient prefetching**.  
+- **Debug Tools**:  
+  - VTune’s **Memory Access analysis**.  
+  - `perf stat -e UNC_B2CMI_PREFCAM_INSERTS.UPI_ALLCH,UNC_B2CMI_PREF_HIT`.  
+
+For maximum performance, **balance prefetching with NUMA locality**. 🚀
+
+
+
