@@ -749,3 +749,244 @@ This metric quantifies **how often directory lookups in the Caching Home Agent (
 - **Solutions**: Reduce sharing, optimize NUMA, replace atomics.  
 
 For deep analysis, use **`perf c2c` (Linux) to detect false sharing** or Intel VTune’s **Memory Access analysis**. 🚀
+
+
+### **Key Differences Between `metric_HA conflict responses per instr` and `metric_HA directory lookups that spawned a snoop (per instr)`**
+
+These two metrics both measure **cache coherency overhead** in Intel multi-core/socket systems, but they track **different phases of the coherency protocol** and have distinct implications for performance tuning. Here’s a breakdown:
+
+---
+
+## **1. Definition and Scope**
+| **Metric** | **What It Measures** | **Protocol Phase** |
+|------------|----------------------|--------------------|
+| `metric_HA conflict responses per instr` (`UNC_CHA_SNOOP_RESP.RSPCNFLCTS`) | Counts **snoop responses** where a core *could not immediately fulfill* a coherency request due to contention (e.g., line was locked, in transition, or another core was modifying it). | **Resolution Phase** (after a snoop is issued). |
+| `metric_HA directory lookups that spawned a snoop (per instr)` (`UNC_CHA_DIR_LOOKUP.SNP`) | Counts **directory lookups** where the CHA *had to issue a snoop* to other cores because the cache line was potentially shared/modified elsewhere. | **Lookup Phase** (before snoops are sent). |
+
+---
+
+## **2. When They Occur in the Coherency Pipeline**
+1. **Directory Lookup (Triggers Snoop)**  
+   - A core requests a cache line (read/write).  
+   - The **CHA checks its directory** to see if other cores might have a copy.  
+   - If the line is **Shared (S)** or **Modified (M)** elsewhere:  
+     - `UNC_CHA_DIR_LOOKUP.SNP` increments (a snoop is spawned).  
+
+2. **Snoop Response (Conflict Detected)**  
+   - The snooped core(s) respond, but **cannot immediately comply** (e.g., line is locked, mid-transaction, or another core is racing).  
+   - `UNC_CHA_SNOOP_RESP.RSPCNFLCTS` increments (a conflict response is sent).  
+
+---
+
+## **3. Performance Implications**
+| **Metric** | **High Value Indicates** | **Common Causes** | **Optimizations** |
+|------------|-------------------------|------------------|-------------------|
+| `UNC_CHA_DIR_LOOKUP.SNP` | Excessive **cross-core/socket sharing** (coherency traffic). | - False sharing.<br>- Atomic operations.<br>- NUMA-unfriendly access. | - Pad data (`alignas(64)`).<br>- Use thread-local storage.<br>- Bind threads to NUMA nodes. |
+| `UNC_CHA_SNOOP_RESP.RSPCNFLCTS` | **Contention** during coherency resolution (cores fighting over lines). | - Locked cache lines.<br>- Heavy atomics.<br>- Core-to-core races. | - Reduce lock granularity.<br>- Replace atomics with thread-local accumulators.<br>- Use non-temporal stores. |
+
+---
+
+## **4. Example Scenario**
+### **Shared Counter in Multi-Threaded Code**
+```c
+atomic_int counter;  // Shared across threads
+void increment() { counter++; }
+```
+- **`UNC_CHA_DIR_LOOKUP.SNP`** ↑  
+  - The CHA directory sees the line is shared, so it **snoops all cores** holding the line.  
+- **`UNC_CHA_SNOOP_RESP.RSPCNFLCTS`** ↑  
+  - Multiple cores try to modify the line simultaneously, causing **conflict responses**.  
+
+### **Fix**
+- Use **per-thread counters** + merge results later.  
+- Or pad the counter to its own cache line:  
+  ```c
+  alignas(64) atomic_int counter;  // No false sharing.
+  ```
+
+---
+
+## **5. Relationship to Other Metrics**
+| **Metric** | **Complements** | **Used Together For** |
+|------------|-----------------|-----------------------|
+| `UNC_CHA_DIR_LOOKUP.SNP` | `UNC_UPI_TxL_FLITS.NON_DATA` (snoop traffic) | Diagnosing **coherency bandwidth overhead**. |
+| `UNC_CHA_SNOOP_RESP.RSPCNFLCTS` | `UNC_CHA_TOR_INSERTS.IA_MISS_RFO` (RFO stalls) | Diagnosing **write contention**. |
+
+---
+
+### **Summary**
+- **`DIR_LOOKUP.SNP`** → Measures **how often snoops are needed** (shared/remote data).  
+- **`SNOOP_RESP.RSPCNFLCTS`** → Measures **how often snoops fail due to contention** (cores fighting over lines).  
+- **Tune both** to reduce coherency overhead in parallel workloads.  
+
+For deep analysis, combine with:  
+- `perf c2c` (false sharing detection).  
+- VTune’s **Memory Access analysis**.
+
+The **MESI protocol** (Modified, Exclusive, Shared, Invalid) operates through **distinct phases** to maintain cache coherency in multi-core systems. While the exact implementation can vary by architecture, the protocol generally follows **4 core phases** during a cache line transaction:
+
+---
+
+### **1. Lookup Phase**  
+- **Purpose**: Determine the current state of the cache line in the directory/other caches.  
+- **Actions**:  
+  - A core requests a cache line (read/write).  
+  - The **Caching Home Agent (CHA)** checks its directory to see if other cores hold the line.  
+  - Events:  
+    - `UNC_CHA_DIR_LOOKUP.SNP` (if a snoop is spawned).  
+
+### **2. Snoop Phase**  
+- **Purpose**: Resolve ownership/consistency by querying other cores.  
+- **Actions**:  
+  - If the line is **Shared (S)** or **Modified (M)** elsewhere, snoops are sent to other cores.  
+  - Cores respond with their copy’s state (e.g., "I have it in Modified").  
+  - Events:  
+    - `UNC_CHA_SNOOP_RESP.HIT*` (hit in another core’s cache).  
+    - `UNC_CHA_SNOOP_RESP.RSPCNFLCTS` (if conflicts occur).  
+
+### **3. Resolution Phase**  
+- **Purpose**: Finalize the line’s state and permissions.  
+- **Actions**:  
+  - The CHA arbitrates conflicting requests (e.g., two cores trying to write).  
+  - The line transitions to a new state:  
+    - **Exclusive (E)** → Only this core has a clean copy.  
+    - **Modified (M)** → This core has exclusive write permission.  
+    - **Shared (S)** → Multiple cores can read.  
+    - **Invalid (I)** → Line is evicted/stale.  
+  - Events:  
+    - `UNC_CHA_TOR_INSERTS.IA_MISS_*` (LLC misses).  
+
+### **4. Completion Phase**  
+- **Purpose**: Fulfill the original request.  
+- **Actions**:  
+  - The requesting core receives the line in the correct state.  
+  - Writebacks occur if needed (e.g., evicting a **Modified** line).  
+  - Events:  
+    - `UNC_CHA_TOR_OCCUPANCY.IA_MISS` (LLC occupancy during completion).  
+
+---
+
+### **Key Intel-Specific Events per Phase**  
+| Phase          | Intel UNCORE Events                          | Description |  
+|----------------|---------------------------------------------|-------------|  
+| **Lookup**     | `UNC_CHA_DIR_LOOKUP.SNP`                    | Directory lookup triggered a snoop. |  
+| **Snoop**      | `UNC_CHA_SNOOP_RESP.HITM`                   | Another core had the line in Modified. |  
+| **Resolution** | `UNC_CHA_SNOOP_RESP.RSPCNFLCTS`             | Snoop responses conflicted. |  
+| **Completion** | `UNC_CHA_TOR_INSERTS.IA_MISS_RFO`           | RFO completed (write access granted). |  
+
+---
+
+### **Why It Matters**  
+- **Performance Impact**:  
+  - **Lookup/Snoop Phases** add latency (cross-core/socket traffic).  
+  - **Resolution Phase** stalls cores during contention.  
+- **Optimizations**:  
+  - Reduce `DIR_LOOKUP.SNP` (minimize sharing).  
+  - Reduce `SNOOP_RESP.RSPCNFLCTS` (avoid atomic/lock contention).  
+
+For NUMA systems, monitor **UPI traffic** (`UNC_UPI_TxL_FLITS.NON_DATA`) to quantify snoop overhead.  
+
+---
+
+### **Summary**  
+The MESI protocol’s **4 phases** ensure coherency but introduce overhead. Use Intel’s uncore metrics to pinpoint bottlenecks in each phase.
+
+
+
+
+### **Understanding `metric_HA directory lookups that did not spawn a snoop (per instr)`**
+
+This metric measures the **proportion of directory lookups in the Caching Home Agent (CHA) that did not require snooping other cores**, normalized per instruction. It reflects **efficient cache access patterns** where data is either:  
+- **Exclusive (E)** to the requesting core, or  
+- **Not shared** with other cores (no coherency overhead).  
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_CHA_DIR_LOOKUP.NO_SNP` (a) | Counts directory lookups where **no snoop was needed** (line was Exclusive/Invalid in other caches). |
+| `INST_RETIRED.ANY` (b) | Total retired instructions (normalizes the metric). |
+
+### **Formula:**
+\[
+\text{Non-Snoop Directory Lookups per Instruction} = \frac{a}{b}
+\]
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >0.9)** → Most memory accesses **avoid coherency traffic** (ideal for scalability).  
+  - Indicates:  
+    - Data is **private** to the requesting core (E/I states dominate).  
+    - Low false sharing/contention.  
+- **Low value (e.g., <0.5)** → Frequent snooping due to **shared data** (coherency overhead).  
+
+### **MESI Protocol Context**
+- **No-snoop lookups occur when**:  
+  - The line is **Exclusive (E)** (only this core has a clean copy).  
+  - The line is **Invalid (I)** (no other core has a copy).  
+- **Snoop is avoided**, reducing latency and UPI traffic.  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- **High `NO_SNP`** → Efficient core-local memory access (low latency, minimal cross-core traffic).  
+- **Low `NO_SNP`** → Snoop storms degrade performance (common in shared-memory workloads).  
+
+### **Optimization Strategies**
+1. **Increase Core-Locality**  
+   - Use **thread-private data** (avoid sharing).  
+   - Allocate memory with `numactl --localalloc`.  
+
+2. **Reduce False Sharing**  
+   - Pad hot variables to separate cache lines:  
+     ```c
+     alignas(64) int thread_data[NUM_THREADS]; // No false sharing
+     ```
+
+3. **Minimize Atomic Operations**  
+   - Replace atomics with **thread-local accumulators**.  
+
+4. **Monitor Complementary Metrics**  
+   - Compare with `UNC_CHA_DIR_LOOKUP.SNP` (snoop-triggering lookups).  
+
+---
+
+## **4. Example Scenario**
+### **Efficient Private Data Access**
+```c
+// Thread-local data (no sharing)
+__thread int local_counter;  // Each core gets its own copy
+void increment() { local_counter++; }
+```
+- **Metric**: `NO_SNP` ≈ 1.0 (no snoops needed).  
+
+### **Inefficient Shared Data Access**
+```c
+// Shared counter (high snooping)
+atomic_int shared_counter;  
+void increment() { shared_counter++; }
+```
+- **Metric**: `NO_SNP` ≈ 0.1 (most lookups spawn snoops).  
+
+---
+
+## **5. Comparison to Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_CHA_DIR_LOOKUP.NO_SNP` | Efficient private accesses | Inverse of `UNC_CHA_DIR_LOOKUP.SNP`. |
+| `UNC_CHA_DIR_LOOKUP.SNP` | Snoop-triggering lookups | Coherency overhead. |
+| `UNC_CHA_SNOOP_RESP.HITM` | Snoops where another core modified data | Severe coherency stalls. |
+
+---
+
+### **Final Thoughts**
+- **Goal**: Maximize `NO_SNP` (minimize snoops).  
+- **High `NO_SNP`** indicates **scalable, low-latency memory access**.  
+- **Debug low `NO_SNP`** with `perf c2c` (false sharing) or VTune’s **Memory Access analysis**.  
+
+For NUMA systems, combine with **UPI utilization metrics** to quantify cross-socket effects. 🚀
