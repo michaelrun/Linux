@@ -1077,7 +1077,9 @@ Directory updates occur when:
 ---
 
 ### **Final Thoughts**
-- **Goal**: Minimize `(a+b+c)/d` (reduce directory thrashing).  ### **Understanding `metric_B2CMI XPT prefetches (per instr)`**
+- **Goal**: Minimize `(a+b+c)/d` (reduce directory thrashing).  ###
+-
+- **Understanding `metric_B2CMI XPT prefetches (per instr)`**
 
 This metric measures the **rate of cross-package (XPT) prefetches** issued by the **B2CMI (Box-to-Core/Memory Interconnect)** per retired instruction. These prefetches aim to reduce latency by proactively fetching data from a **remote socket's memory** into the **local socket's cache hierarchy**.
 
