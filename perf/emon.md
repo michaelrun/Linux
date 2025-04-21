@@ -1853,6 +1853,94 @@ This metric calculates the **average number of entries in the Read Pending Queue
 For deep analysis, combine with **DRAM bandwidth metrics** and `perf mem`. 🚀
 
 
+### **Understanding `metric_CHA % OSB Loc InvItoE`**
+
+This metric measures the **percentage of "InvItoE" (Invalidate-to-Exclusive) snoop requests** that were **resolved locally by the OSB (Opportunistic Snoop Broadcast)** mechanism in Intel's Caching Home Agent (CHA). It reflects the efficiency of the coherence protocol in handling local cache invalidations.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_CHA_OSB.LOCAL_INVITOE` (a) | Counts **local** snoop invalidations resolved by OSB (no cross-socket traffic). |
+| `UNC_CHA_REQUESTS.INVITOE_LOCAL` (b) | Total **local** "Invalidate-to-Exclusive" (InvItoE) snoop requests. |
+
+### **Formula:**
+\[
+\text{OSB Local InvItoE (\%)} = 100 \times \frac{a}{b}
+\]
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >90%)** → Most invalidations are resolved **locally** (efficient).  
+  - Indicates **low cross-socket snoop traffic** (good NUMA locality).  
+- **Low value (e.g., <50%)** → Many invalidations require **remote snoops** (inefficient).  
+  - Suggests **NUMA-unfriendly sharing** or **false sharing**.  
+
+### **Background: InvItoE and OSB**
+- **InvItoE (Invalidate-to-Exclusive)**:  
+  - A coherence request to **invalidate** other copies of a cache line and transition it to **Exclusive (E)** state for a writer.  
+- **OSB (Opportunistic Snoop Broadcast)**:  
+  - A hardware optimization that **resolves snoops locally** if possible, avoiding costly cross-socket UPI traffic.  
+
+---
+
+## **3. Why Does This Matter?**
+### **Performance Impact**
+- **High OSB Local %** → Minimal coherency overhead (ideal).  
+- **Low OSB Local %** → Excessive **cross-socket snoops**, increasing:  
+  - **Latency**: Remote snoops take ~100–200 ns vs. ~10 ns for local.  
+  - **UPI Bandwidth**: Snoops consume inter-socket links.  
+
+### **Optimization Strategies**
+1. **Improve NUMA Locality**  
+   - Bind threads to sockets (`numactl --cpunodebind`).  
+   - Allocate memory locally (`numactl --localalloc`).  
+2. **Reduce False Sharing**  
+   - Pad shared variables to cache lines:  
+     ```c
+     alignas(64) int padded_data[THREADS];  // 64-byte alignment
+     ```  
+3. **Minimize Atomic Operations**  
+   - Replace `atomic` variables with **thread-local accumulators**.  
+
+---
+
+## **4. Example Scenario**
+### **Low OSB Local % in a Multi-Socket App**
+- **Observation**:  
+  - `metric_CHA % OSB Loc InvItoE` = 40%.  
+  - `UNC_CHA_SNOOP_RESP.HITM` is high.  
+- **Diagnosis**:  
+  - Threads on Socket 0 frequently invalidate lines owned by Socket 1.  
+- **Fix**:  
+  - Partition data by socket (sharding).  
+  - Use `__thread` or thread-local storage.  
+
+---
+
+## **5. Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_CHA_SNOOP_RESP.HITM` | Snoops hitting modified lines | High HITM → Low OSB Local %. |  
+| `UNC_UPI_TxL_FLITS.NON_DATA` | UPI snoop traffic | Correlates with remote invalidations. |  
+| `UNC_CHA_DIR_UPDATE.HA` | Local directory updates | Part of coherency overhead. |  
+
+---
+
+### **Final Thoughts**
+- **Goal**: Maximize `a/b` (resolve invalidations locally).  
+- **Debug Tools**:  
+  - **`perf c2c`**: Detect false sharing.  
+  - **VTune Memory Analysis**: Profile NUMA access patterns.  
+- **NUMA Matters**: This metric is **critical for multi-socket performance**.  
+
+For Intel-specific tuning, consult the *Uncore Performance Monitoring Guide*. 🚀
+
+
 
 
 
