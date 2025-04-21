@@ -1760,6 +1760,101 @@ The **TOR (Tracker Occupancy Register)** is a hardware structure in Intel's **Ca
 For deep dives, consult Intel’s *Uncore Performance Monitoring Guide*. 🚀
 
 
+### **Understanding `metric_memory avg entries in RPQ`**
+
+This metric calculates the **average number of entries in the Read Pending Queue (RPQ)** per memory controller clock tick. The RPQ is a critical structure in Intel's memory subsystem that manages outstanding read requests to DRAM. High RPQ occupancy can indicate memory bandwidth saturation or latency bottlenecks.
+
+---
+
+## **1. Key Components**
+### **Events in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_M_CLOCKTICKS` (a) | Memory controller clock ticks (normalizes the metric over time). |
+| `UNC_M_RPQ_OCCUPANCY_SCH0_PCH0` (b) | RPQ occupancy for **Scheduler 0, Channel 0**. |
+| `UNC_M_RPQ_OCCUPANCY_SCH1_PCH0` (c) | RPQ occupancy for **Scheduler 1, Channel 0**. |
+| `UNC_M_RPQ_OCCUPANCY_SCH0_PCH1` (d) | RPQ occupancy for **Scheduler 0, Channel 1**. |
+| `UNC_M_RPQ_OCCUPANCY_SCH1_PCH1` (e) | RPQ occupancy for **Scheduler 1, Channel 1**. |
+
+### **Formula:**
+\[
+\text{Average RPQ Entries} = \frac{(b + c + d + e)}{(a / 2)}
+\]
+- **Numerator**: Total RPQ occupancy across all schedulers/channels.  
+- **Denominator**: Half the memory controller clock ticks (adjusts for dual-channel sampling).  
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >10 entries)** → Memory bandwidth saturation:  
+  - Read requests are piling up due to **slow DRAM** or **excessive demand**.  
+  - May cause **core stalls** (visible as high `CPU_STALLS_ON_MEMORY` in `perf`).  
+- **Low value (e.g., <2 entries)** → Healthy memory subsystem:  
+  - Reads are serviced quickly.  
+
+### **Why RPQ Matters**
+1. **Latency Impact**:  
+   - Each RPQ entry represents a **pending read request**.  
+   - High occupancy → Longer latency for subsequent reads.  
+2. **Bandwidth Saturation**:  
+   - RPQ fills up when the memory controller cannot keep up with demand.  
+3. **Channel Imbalance**:  
+   - If one channel has much higher RPQ occupancy than others, it may indicate **NUMA imbalance** or **channel contention**.  
+
+---
+
+## **3. Optimization Strategies**
+### **If RPQ Occupancy is High:**
+1. **Reduce Read Traffic**  
+   - Improve cache locality (e.g., loop blocking, prefetching).  
+   - Use smaller data types (e.g., `int16_t` instead of `int32_t`).  
+2. **Increase DRAM Bandwidth**  
+   - Enable higher memory speeds (BIOS settings).  
+   - Use **multi-channel configurations** (e.g., dual/quad-channel RAM).  
+3. **NUMA-Aware Placement**  
+   - Bind threads to local NUMA nodes (`numactl --cpunodebind`).  
+   - Allocate memory locally (`numactl --localalloc`).  
+
+### **Debug Tools**
+- **`perf stat -e UNC_M_RPQ_OCCUPANCY_*`**: Track RPQ per channel.  
+- **`likwid-perfctr`**: Measure memory bandwidth/load.  
+- **VTune Memory Analysis**: Identify bandwidth bottlenecks.  
+
+---
+
+## **4. Example Scenario**
+### **High RPQ in a Database Workload**
+- **Observation**:  
+  - `metric_memory avg entries in RPQ` = 15.  
+  - `UNC_M_RPQ_OCCUPANCY_SCH0_PCH0` dominates (channel imbalance).  
+- **Diagnosis**:  
+  - Threads on NUMA node 0 are overloading Channel 0.  
+- **Fix**:  
+  - Distribute memory access evenly across channels (e.g., interleave allocation).  
+  - Bind threads to cores near the underutilized channel.  
+
+---
+
+## **5. Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_M_WPQ_OCCUPANCY` | Write Pending Queue | Write bandwidth saturation. |  
+| `UNC_M_CAS_COUNT.RD` | DRAM read CAS counts | Correlates with RPQ occupancy. |  
+| `UNC_M_DRAM_BANDWIDTH` | Total DRAM bandwidth | Context for RPQ saturation. |  
+
+---
+
+### **Final Thoughts**
+- **RPQ is a leading indicator of memory bottlenecks**.  
+- **Goal**: Keep average RPQ low (<5 entries) for optimal latency.  
+- **Tune**: Balance read traffic across channels/NUMA nodes.  
+
+For deep analysis, combine with **DRAM bandwidth metrics** and `perf mem`. 🚀
+
+
+
+
 
 
 
