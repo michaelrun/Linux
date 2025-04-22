@@ -2119,6 +2119,184 @@ volatile uint32_t* nic_reg = (uint32_t*)0xMMIO_ADDR;
 
 For deep dives, consult Intel’s *Uncore Performance Monitoring Guide* or PCIe device manuals. 🚀
 
+### **Understanding `metric_B2CMI Rd Trk avg entries`**
+
+This metric calculates the **average number of entries in the B2CMI (Box-to-Core/Memory Interconnect) read tracker queues** per clock tick, normalized by the number of memory controllers (MCS) and sockets. It helps diagnose **memory read congestion** in multi-socket Intel systems (e.g., Skylake-SP, Ice Lake-SP).
+
+---
+
+## **1. Key Components**
+### **Events & Constants**
+| **Symbol** | **Description** |
+|------------|----------------|
+| `UNC_B2CMI_TRACKER_OCCUPANCY.CH0` (a) | Occupancy of read tracker entries for **Channel 0**. |
+| `UNC_CHA_CLOCKTICKS` (c) | CHA clock ticks (time normalization). |
+| `system.cha_count/system.socket_count` (d) | CHAs (Caching Home Agents) per socket. |
+| `mcs_populated_per_socket` | Memory controllers per socket (fixed at 8 for typical Intel CPUs). |
+| `socket_count` | Total sockets in the system. |
+
+### **Formula:**
+\[
+\text{Avg Read Tracker Entries} = \frac{\left(\frac{a}{\text{mcs\_populated\_per\_socket}}\right)}{\left(\frac{c}{d \times \text{socket\_count}}\right)}
+\]
+- **Numerator**: Read tracker occupancy per memory controller.  
+- **Denominator**: Clock ticks normalized per CHA.  
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >5 entries)** → High read congestion:  
+  - Memory bandwidth saturation (DRAM cannot keep up with requests).  
+  - NUMA-unfriendly access patterns (remote reads dominate).  
+- **Low value (e.g., <1 entry)** → Healthy read throughput (minimal queuing).  
+
+### **Why It Matters**
+1. **Latency Impact**:  
+   - Each tracker entry represents a **pending read request**. High occupancy increases latency.  
+2. **Bandwidth Saturation**:  
+   - Correlates with `UNC_M_RPQ_OCCUPANCY` (DRAM read queue congestion).  
+3. **NUMA Overhead**:  
+   - Cross-socket reads (`B2CMI`) exacerbate tracker occupancy.  
+
+---
+
+## **3. Optimization Strategies**
+### **If Tracker Occupancy is High**
+1. **Improve Memory Locality**  
+   - Use `numactl --localalloc` to bind memory to local sockets.  
+   - Reduce cross-socket traffic (partition data).  
+2. **Increase DRAM Bandwidth**  
+   - Enable higher memory speeds (BIOS tuning).  
+   - Use all populated memory channels (check `numactl -H`).  
+3. **Batch Remote Reads**  
+   - Use software prefetching (`_mm_prefetch`) for predictable access patterns.  
+
+### **Debug Tools**
+- **`perf stat -e UNC_B2CMI_TRACKER_OCCUPANCY.*`**  
+- **`numactl -H`**: Verify memory channel utilization.  
+- **VTune Memory Analysis**: Identify bandwidth bottlenecks.  
+
+---
+
+## **4. Example Scenario**
+### **High Tracker Occupancy in a Database**
+- **Observation**:  
+  - `metric_B2CMI Rd Trk avg entries` = 8.  
+  - `UNC_M_RPQ_OCCUPANCY` is also high.  
+- **Diagnosis**:  
+  - Threads on Socket 0 frequently read remote data from Socket 1.  
+- **Fix**:  
+  - Replicate read-only data across sockets.  
+  - Bind threads to local NUMA nodes.  
+
+---
+
+## **5. Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_M_RPQ_OCCUPANCY` | DRAM read queue congestion | Direct correlation. |  
+| `UNC_B2CMI_DIRECTORY_UPDATE.ANY` | Cross-socket coherency | Adds tracker pressure. |  
+| `UNC_UPI_RxL_FLITS.ALL_DATA` | UPI read traffic | Remote reads increase tracker usage. |  
+
+---
+
+### **Final Thoughts**
+- **Goal**: Keep tracker occupancy low (<2 entries) for optimal latency.  
+- **Critical for**:  
+  - Memory-bound workloads (HPC, databases).  
+  - NUMA-optimized applications.  
+- **Debug**: Combine with `perf` and NUMA tools.  
+
+For Intel-specific tuning, consult the *Uncore Performance Monitoring Guide*. 🚀
+
+
+### **Understanding `metric_IO read cache miss (disk/network writes) bandwidth (MB/sec)`**
+
+This metric estimates the **bandwidth consumed by I/O read operations that missed the CPU cache** (requiring data fetches from disk/network devices), converted to **MB/sec**. It helps quantify the impact of I/O-bound workloads on memory bandwidth.
+
+---
+
+## **1. Key Components**
+### **Event in the Formula:**
+| **Event** | **Description** |
+|-----------|----------------|
+| `UNC_CHA_TOR_INSERTS.IO_MISS_PCIRDCUR` (a) | Counts I/O read requests that missed the CPU cache (PCIe/device reads). |
+
+### **Formula:**
+\[
+\text{Bandwidth (MB/sec)} = \frac{a \times 64}{1,000,000}
+\]
+- **`64`**: Assumes 64-byte cache lines (standard x86).  
+- **`1,000,000`**: Converts bytes to MB.  
+
+---
+
+## **2. What Does This Metric Mean?**
+### **Interpretation**
+- **High value (e.g., >500 MB/sec)** → Significant I/O read traffic bypassing CPU caches:  
+  - Frequent **disk/network reads** (e.g., database scans, packet processing).  
+  - **Inefficient caching** (working set exceeds cache capacity).  
+- **Low value (e.g., <50 MB/sec)** → Most I/O reads are cached (optimal).  
+
+### **Why It Matters**
+1. **Latency Impact**:  
+   - Cache misses force reads from **slower PCIe devices** (NVMe, NICs).  
+2. **Bandwidth Saturation**:  
+   - Competes with application memory traffic for **DRAM bandwidth**.  
+3. **NUMA Overhead**:  
+   - Remote I/O reads (e.g., GPU/NIC on another socket) add cross-socket latency.  
+
+---
+
+## **3. Optimization Strategies**
+### **Reduce I/O Read Cache Misses**
+1. **Increase Cache Efficiency**  
+   - Use `posix_fadvise` (Linux) or `_mm_prefetch` to hint at access patterns.  
+   - Optimize I/O block sizes to match cache lines (e.g., 64B/128B aligned).  
+2. **Reduce Unnecessary I/O Reads**  
+   - Cache frequently accessed device data (e.g., NIC ring buffers).  
+   - Use zero-copy techniques (e.g., `mmap` for file I/O).  
+3. **NUMA-Aware I/O**  
+   - Bind NICs/GPUs to the same socket as processing threads (`numactl`).  
+
+### **Debug Tools**
+- **`perf stat -e UNC_CHA_TOR_INSERTS.IO_MISS_PCIRDCUR`**  
+- **`iostat -x`**: Check disk I/O bandwidth.  
+- **VTune**: Analyze I/O-bound workloads.  
+
+---
+
+## **4. Example Scenario**
+### **High I/O Read Misses in a Database**
+- **Observation**:  
+  - `metric_IO read cache miss bandwidth` = 800 MB/sec.  
+  - `iostat` shows high disk read activity.  
+- **Diagnosis**:  
+  - Database performs full-table scans without caching.  
+- **Fix**:  
+  - Increase `innodb_buffer_pool_size` (MySQL) or enable filesystem caching.  
+
+---
+
+## **5. Related Metrics**
+| **Metric** | **What It Measures** | **Relationship** |
+|------------|----------------------|------------------|
+| `UNC_CHA_TOR_INSERTS.IO_HIT_PCIRDCUR` | Cached I/O reads | Contrast with misses. |  
+| `UNC_P_PCIE_RD_REQUESTS` | PCIe read requests | Direct correlation. |  
+| `UNC_M_RPQ_OCCUPANCY` | DRAM read queue pressure | Misses increase occupancy. |  
+
+---
+
+### **Final Thoughts**
+- **Goal**: Minimize `IO_MISS_PCIRDCUR` to reduce I/O latency.  
+- **Critical for**:  
+  - Storage/network-heavy workloads (databases, packet processing).  
+  - Low-latency systems (HFT, real-time analytics).  
+- **Debug**: Combine with `perf` and I/O monitoring tools.  
+
+For tuning, refer to Intel’s *Uncore Manual* and device-specific guidelines. 🚀
+
 
 
 
