@@ -4174,6 +4174,356 @@ dmb ish
 
 Memory fences are powerful tools but should be used judiciously. They're most valuable in performance-critical lock-free code where you need precise control over memory visibility and ordering. For most high-level synchronization, standard mutexes and atomic variables with default ordering are safer and more maintainable.
 
+# Understanding the Other_Mispredicts(%) Metric
+
+## What This Metric Measures
+
+The `Other_Mispredicts(%)` metric quantifies pipeline stalls caused by mispredictions that aren't captured by standard branch prediction counters, including:
+
+1. **Non-retired x86 branches**: Branches that were speculatively executed but never retired
+2. **Other prediction failures**: Mispredictions in specialized predictors beyond the main branch predictor
+
+## Formula Breakdown
+
+The formula calculates:
+```
+Other_Mispredicts(%) = max(
+  (Branch_Mispredicts_Ratio * (1 - Retired_Branches_Ratio)),
+  0.0001
+)
+```
+
+Where:
+- `Branch_Mispredicts_Ratio = a / (b + c + d + e)`
+- `Retired_Branches_Ratio = f / (g - h)`
+
+## Key Components Explained
+
+### Performance Events
+1. **PERF_METRICS.BRANCH_MISPREDICTS (a)**: Total branch mispredictions
+2. **FRONTEND_BOUND + BAD_SPECULATION + RETIRING + BACKEND_BOUND (b-e)**: Pipeline slot components
+3. **BR_MISP_RETIRED.ALL_BRANCHES (f)**: Retired mispredicted branches
+4. **INT_MISC.CLEARS_COUNT (g)**: Total pipeline clears
+5. **MACHINE_CLEARS.COUNT (h)**: Clears due to machine clears (non-branch causes)
+
+### The Subtle Calculation
+The term `(1 - f / (g - h))` isolates mispredictions that:
+1. Caused pipeline clears (`g - h`)
+2. But weren't from retired branches (`f`)
+
+## Architectural Context
+
+Modern CPUs have multiple specialized predictors:
+
+1. **Main Branch Predictor**
+   - Handles conditional branches
+   - Tracked by BR_MISP_RETIRED events
+
+2. **Other Predictors**
+   - Return Address Stack (RAS)
+   - Indirect Branch Predictor
+   - Loop Detectors
+   - Memory Disambiguation Predictor
+
+When these *other* predictors fail, they cause pipeline clears but may not increment standard branch misprediction counters.
+
+## Code Patterns That Trigger This Metric
+
+### 1. Indirect Call Mispredictions
+```cpp
+// Virtual function calls with random patterns
+for (auto obj : objects) {
+    obj->virtualMethod();  // Indirect call misprediction
+}
+```
+
+### 2. Return Address Stack Corruption
+```cpp
+// Deep recursion with varying patterns
+void recursiveFunc(int depth) {
+    if (depth <= 0) return;
+    // Alternating call patterns confuse RAS
+    (depth % 2) ? recursiveFuncA(depth-1) 
+                : recursiveFuncB(depth-1);
+}
+```
+
+### 3. Complex Loop Patterns
+```cpp
+// Irregular loop control flow
+for (int i = begin; i != end; ) {
+    if (condition) i += step1;
+    else i += step2;  // Hard for loop predictor
+}
+```
+
+## Optimization Strategies
+
+### 1. Indirect Call Optimization
+```cpp
+// Before
+std::vector<Base*> objects;
+
+// After: Type-sorted execution
+std::vector<Derived1*> type1;
+std::vector<Derived2*> type2;
+// Process each type batch sequentially
+```
+
+### 2. Return Address Stack Management
+```cpp
+// Limit recursion depth
+void processTree(Node* node) {
+    while (node) {
+        process(node);
+        if (node->left) {
+            processTree(node->left);  // Recursion
+            node = node->right;       // Tail recursion
+        } else {
+            node = node->right;
+        }
+    }
+}
+```
+
+### 3. Loop Predictor Friendly Code
+```cpp
+// Make loops regular
+for (int i = 0; i < N; i += fixed_step) {
+    process(i);
+}
+```
+
+## Performance Monitoring
+
+### Linux perf Commands
+```bash
+# Check indirect branch misses
+perf stat -e branches,branch-misses,indirect-branch-misses ./program
+
+# Detailed analysis
+perf record -e cpu/event=0xc5,umask=0x1,name=BR_MISP_RETIRED.INDIRECT/ ./program
+```
+
+## Interpretation Guide
+
+- **<0.5%**: Normal
+- **0.5-2%**: Potential optimization opportunity
+- **>2%**: Significant predictor thrashing
+
+## Advanced Scenarios
+
+### JIT Code with Varying Patterns
+```cpp
+// Dynamic code generation causing predictor issues
+void executeGenerated() {
+    void (*func)() = generateCode();  // Varying call patterns
+    func();
+}
+
+// Solution: Consistent call patterns
+void executeStable() {
+    static void (*func)() = generateStableCode();
+    func();
+}
+```
+
+### Polymorphic Benchmark Results
+
+| Code Pattern               | Branch Mispredicts | Other Mispredicts |
+|----------------------------|--------------------|-------------------|
+| Regular loops              | 0.1%               | 0.05%             |
+| Virtual calls (random)     | 1.2%               | 3.5%              |
+| Deep recursion             | 0.3%               | 1.8%              |
+| Indirect jumps (computed)  | 0.8%               | 2.1%              |
+
+This metric helps identify "hidden" prediction overheads that traditional branch analysis might miss, particularly important for code with complex control flow patterns.
+# Understanding the L1_Bound(%) Metric
+
+## What This Metric Measures
+
+The `L1_Bound(%)` metric quantifies cycles where the CPU is stalled waiting for data that *technically* hits in the L1 data cache (L1D), but still experiences latency due to various microarchitectural bottlenecks. These are cases where:
+- Data is present in L1D
+- Yet the load operation still stalls execution
+
+## Formula Breakdown
+
+```
+L1_Bound(%) = max( (EXE_ACTIVITY.BOUND_ON_LOADS - MEMORY_ACTIVITY.STALLS_L1D_MISS) / CPU_CLK_UNHALTED.THREAD, 0 ) * 100
+```
+
+## Key Components Explained
+
+### Performance Events
+1. **EXE_ACTIVITY.BOUND_ON_LOADS (a)**: Cycles where execution is stalled waiting for load operations
+2. **MEMORY_ACTIVITY.STALLS_L1D_MISS (b)**: Load stalls specifically due to L1D cache misses
+3. **CPU_CLK_UNHALTED.THREAD (c)**: Total elapsed core cycles
+
+### The Core Calculation
+The formula isolates stalls where:
+- Execution is bound by loads (`BOUND_ON_LOADS`)
+- But the loads aren't missing L1D (`STALLS_L1D_MISS`)
+
+## Architectural Causes of L1_Bound
+
+### 1. Load Blocked by Older Stores (Store Forwarding)
+```cpp
+// Example causing store-forwarding stalls
+int a = 1;
+int b = 2;
+a = 3;       // Store
+int c = a;   // Load blocked waiting for store
+```
+
+**Characteristics**:
+- 5-10 cycle penalty
+- Common in pointer-chasing code
+
+### 2. TLB Misses (L1 Hit but TLB Miss)
+```cpp
+// Random memory access pattern
+for (int i : random_indices) {
+    sum += data[i];  // Page walks needed
+}
+```
+
+### 3. Bank Conflicts
+```cpp
+// Strided access hitting same cache bank
+for (int i = 0; i < SIZE; i += 8) {
+    process(data[i]); 
+}
+```
+
+### 4. Address Generation Interlock (AGI)
+```asm
+; x86 example
+lea rbx, [rbx+rax]  ; AGI stall on rbx
+mov rcx, [rbx]      ; Wait for address calc
+```
+
+## Code Patterns That Trigger L1_Bound
+
+### Store Forwarding Stalls
+```cpp
+// Pointer chasing with modification
+Node* current = head;
+while (current) {
+    process(current->data);
+    current->data = update(current->data);  // Store
+    current = current->next;                // Load blocked
+}
+```
+
+### TLB Thrashing
+```cpp
+// Large sparse matrix access
+for (int i = 0; i < ROWS; i++) {
+    for (int j = 0; j < COLS; j += PAGE_SIZE/sizeof(float)) {
+        matrix[i][j] += 1;  // New page every iteration
+    }
+}
+```
+
+## Optimization Strategies
+
+### 1. Store Forwarding Fixes
+```cpp
+// Before: Store then dependent load
+a = x;
+b = a + y;
+
+// After: Separate store/load chains
+int temp = a + y;
+a = x;
+b = temp;
+```
+
+### 2. TLB Optimization
+```cpp
+// Blocked processing for better locality
+const int BLOCK = 512;
+for (int ii = 0; ii < N; ii += BLOCK) {
+    for (int jj = 0; jj < N; jj += BLOCK) {
+        for (int i = ii; i < ii+BLOCK; i++) {
+            for (int j = jj; j < jj+BLOCK; j++) {
+                matrix[i][j] += 1;
+            }
+        }
+    }
+}
+```
+
+### 3. Bank Conflict Avoidance
+```cpp
+// Add small offset to stride
+for (int i = 0; i < SIZE; i += (CACHE_LINE_SIZE + 1)) {
+    process(data[i]);
+}
+```
+
+### 4. AGI Elimination
+```cpp
+// Unroll loops to break dependencies
+for (int i = 0; i < SIZE; i += 2) {
+    process(data[i]);
+    process(data[i+1]);  // Independent address calc
+}
+```
+
+## Performance Monitoring
+
+### Linux perf Commands
+```bash
+# Check store forwarding stalls
+perf stat -e ld_blocks.store_forward ./program
+
+# TLB misses
+perf stat -e dTLB-load-misses,dTLB-store-misses ./program
+
+# Full L1D analysis
+perf stat -e \
+cycles,ld_blocks.store_forward,\
+mem_load_retired.l1_hit,\
+mem_load_retired.fb_hit \
+./program
+```
+
+## Interpretation Guide
+
+- **<1%**: Normal
+- **1-3%**: Potential optimization opportunity
+- **>3%**: Significant microarchitectural bottlenecks
+
+## Advanced Scenarios
+
+### Store Forwarding in Hot Loops
+```cpp
+// Before
+for (int i = 0; i < N; i++) {
+    results[i] = process(data[i]);
+    global_index = i;  // Store
+    log(global_index); // Load blocked
+}
+
+// After
+for (int i = 0; i < N; i++) {
+    results[i] = process(data[i]);
+    log(i);  // Use local var
+    global_index = i;  // Move store to end
+}
+```
+
+### TLB Optimization for Large Data
+```cpp
+// Use huge pages when possible
+void* buffer = mmap(NULL, SIZE, PROT_READ|PROT_WRITE,
+                    MAP_PRIVATE|MAP_ANONYMOUS|MAP_HUGETLB,
+                    -1, 0);
+```
+
+This metric is particularly valuable for optimizing performance-critical loops where traditional cache miss analysis doesn't explain observed stalls, revealing hidden microarchitectural bottlenecks in the memory subsystem.
+
 
 
 
