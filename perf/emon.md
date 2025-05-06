@@ -5267,6 +5267,561 @@ cpu/event=0x0D,umask=0x01,name=MEM_INST_RETIRED.ST_FWDS/ \
 Store forwarding represents a critical balance between performance and correctness in modern CPUs. Understanding its mechanisms allows developers to write cache-friendly code that maximizes the benefits while avoiding the pitfalls of store forward blocks.
 
 
+# Understanding L2_Bound(%) in CPU Performance Analysis
+
+## Core Concept
+
+The `L2_Bound(%)` metric quantifies cycles where the CPU pipeline is stalled waiting for data that:
+1. **Missed the L1 Data Cache** (L1D)
+2. **Was found in the L2 Cache** (L2 hit)
+3. **Caused execution stalls** while waiting for L2 access
+
+## Formula Breakdown
+
+```
+L2_Bound(%) = 100 * (L1D_MISS_STALLS - L2_MISS_STALLS) / TOTAL_CYCLES
+```
+
+### Components:
+- **MEMORY_ACTIVITY.STALLS_L1D_MISS (a)**: Cycles stalled on L1D misses
+- **MEMORY_ACTIVITY.STALLS_L2_MISS (b)**: Subset of (a) where data missed L2
+- **CPU_CLK_UNHALTED.THREAD (c)**: Total execution cycles
+
+## Microarchitectural Behavior
+
+### Cache Hierarchy Access
+```
+L1D Miss → Check L2 → [L2 Hit: 12-14 cycles] / [L2 Miss: Check L3]
+```
+
+### Pipeline Effects
+1. **L1D Miss Detected** (Cycle 3)
+2. **L2 Tag Check** (Cycle 4-5)
+3. **L2 Data Access** (Cycle 6-16)
+4. **Data Forwarded to Pipeline** (Cycle 17)
+
+## Why L2 Hits Matter
+
+While better than L3/DRAM accesses, L2 hits still incur significant penalties:
+- **12-14 cycle latency** (vs 4-5 for L1)
+- **Consume memory parallelism resources**
+- **Block dependent instructions**
+
+## Code Patterns Causing L2_Bound
+
+### 1. Moderate Locality Workloads
+```c
+// Process every 16th element (spans L1 but fits L2)
+for (int i=0; i<SIZE; i+=16) {
+    sum += data[i] * data[i+1];
+}
+```
+
+### 2. Medium Working Sets
+```c
+// Working set ~256-1024KB (fits L2 but not L1)
+for (int i=0; i<200000; i++) {
+    process(array[i % (256KB/sizeof(element))]);
+}
+```
+
+### 3. Irregular Access Within L2
+```c
+// Random access within L2-sized region
+for (int i=0; i<100000; i++) {
+    sum += data[random() % (512KB/sizeof(data[0]))];
+}
+```
+
+## Optimization Strategies
+
+### 1. Cache Blocking
+```c
+// Process data in L1-sized chunks
+const int BLOCK = 1024; // 16KB for 16-byte elements
+for (int ii=0; ii<SIZE; ii+=BLOCK) {
+    for (int i=ii; i<min(ii+BLOCK,SIZE); i++) {
+        process(data[i]);
+    }
+}
+```
+
+### 2. Prefetching
+```c
+// Prefetch to L1 ahead of use
+for (int i=0; i<SIZE; i++) {
+    __builtin_prefetch(&data[i+8], 0, 1); // L1 prefetch
+    process(data[i]);
+}
+```
+
+### 3. Data Layout Optimization
+```c
+// Convert Array of Structs to Struct of Arrays
+struct SoA {
+    float* x;
+    float* y;
+    float* z;
+};
+// Instead of AoS:
+struct AoS {
+    float x, y, z;
+};
+```
+
+## Performance Characteristics
+
+### Latency Comparison
+| Cache Level | Typical Latency (cycles) |
+|-------------|--------------------------|
+| L1 Hit      | 4-5                      |
+| L2 Hit      | 12-14                    |
+| L3 Hit      | 30-40                    |
+| DRAM        | 100-300                  |
+
+### Intel Microarchitectures
+| Generation   | L2 Size | L2 Latency |
+|--------------|---------|------------|
+| Skylake      | 256KB   | 12 cycles  |
+| Ice Lake     | 512KB   | 14 cycles  |
+| Golden Cove  | 1.25MB  | 12 cycles  |
+
+## Detection and Analysis
+
+### Linux perf Commands
+```bash
+# Basic L2 monitoring
+perf stat -e \
+mem_load_retired.l2_hit,\
+cycles \
+./app
+
+# Advanced analysis
+perf stat -e \
+cpu/event=0xD1,umask=0x1,name=MEM_LOAD_RETIRED.L2_HIT/,\
+cpu/event=0xA3,umask=0x1,name=CYCLE_ACTIVITY.STALLS_L2_MISS/ \
+./app
+```
+
+## Interpretation Guide
+
+| L2_Bound(%) | Severity       | Suggested Action               |
+|-------------|----------------|---------------------------------|
+| <1%         | Normal         | No action needed               |
+| 1-3%        | Moderate       | Profile hot loops              |
+| >3%         | Critical       | Restructure memory access      |
+
+## Real-World Example
+
+### Image Processing
+```c
+// Process 512x512 image (1MB - fits L2)
+for (int y=0; y<512; y++) {
+    for (int x=0; x<512; x++) {
+        // Strided access causes L1 misses
+        process(image[y][x], image[y+1][x]); 
+    }
+}
+
+// Optimized version with blocking
+for (int yy=0; yy<512; yy+=64) {
+    for (int xx=0; xx<512; xx+=64) {
+        for (int y=yy; y<yy+64; y++) {
+            for (int x=xx; x<xx+64; x++) {
+                process(image[y][x], image[y+1][x]);
+            }
+        }
+    }
+}
+```
+
+The L2_Bound(%) metric is crucial for identifying workloads that are too large for L1 but still fit in L2. Optimizing these cases can yield significant performance improvements by reducing average memory access latency from ~12 cycles (L2) to ~4 cycles (L1).
+
+
+# Deep Dive into L3_Bound(%) Metric
+
+## Fundamental Concept
+
+The `L3_Bound(%)` metric measures cycles where the CPU pipeline stalls waiting for data that:
+- **Missed both L1 and L2 caches**
+- **Was found in the Last-Level Cache (L3)**
+- **Caused execution stalls** during L3 access
+
+## Formula Analysis
+
+```
+L3_Bound(%) = 100 * (L2_MISS_STALLS - L3_MISS_STALLS) / TOTAL_CYCLES
+```
+
+### Key Components:
+- **MEMORY_ACTIVITY.STALLS_L2_MISS (a)**: Cycles stalled on L2 misses
+- **MEMORY_ACTIVITY.STALLS_L3_MISS (b)**: Subset of (a) where data also missed L3
+- **CPU_CLK_UNHALTED.THREAD (c)**: Total execution cycles
+
+## Microarchitectural Behavior
+
+### Cache Access Flow
+```
+L1 Miss → L2 Miss → L3 Access → [L3 Hit: 30-40 cycles] / [L3 Miss: DRAM]
+```
+
+### Pipeline Impact
+1. **L1/L2 Miss Detected** (Cycle 3-15)
+2. **L3 Tag Check** (Cycle 16-18)
+3. **L3 Data Access** (Cycle 19-45)
+4. **Data Available** (Cycle 46)
+
+## Why L3 Bound Matters
+
+While better than DRAM access, L3 hits still incur substantial penalties:
+- **30-40 cycle latency** (vs 12-14 for L2)
+- **Consumes memory-level parallelism (MLP) resources**
+- **Shared resource** (contended by all cores)
+
+## Common Code Patterns
+
+### 1. Large Working Sets
+```c
+// Process 8-16MB dataset (fits L3 but not L2)
+for (int i=0; i<2000000; i++) {
+    process(data[i % (8MB/sizeof(element))]);
+}
+```
+
+### 2. Cross-Core Sharing
+```c
+// Threads accessing shared L3-resident data
+void worker(int id) {
+    for (int i=id; i<SIZE; i+=NUM_THREADS) {
+        shared_array[i] = process(i); // L3 contention
+    }
+}
+```
+
+### 3. Irregular Medium-Scale Access
+```c
+// Random access within L3-sized region
+for (int i=0; i<1000000; i++) {
+    sum += data[random() % (16MB/sizeof(data[0]))];
+}
+```
+
+## Optimization Strategies
+
+### 1. NUMA-Aware Allocation
+```c
+// Allocate thread-local memory
+void* buffer = mmap(NULL, size, PROT_READ|PROT_WRITE,
+                   MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE,
+                   -1, 0);
+```
+
+### 2. Cache-Conscious Partitioning
+```c
+// Split work by L3 slices
+for (int i=core_id*CHUNK; i<(core_id+1)*CHUNK; i++) {
+    process(data[i]); // Minimize cross-core sharing
+}
+```
+
+### 3. Software Prefetching
+```c
+// Prefetch to L2 ahead of use
+for (int i=0; i<SIZE; i++) {
+    __builtin_prefetch(&data[i+16], 0, 2); // L2 prefetch
+    process(data[i]);
+}
+```
+
+## Performance Characteristics
+
+### Latency Comparison
+| Cache Level | Typical Latency (cycles) |
+|-------------|--------------------------|
+| L1 Hit      | 4-5                      |
+| L2 Hit      | 12-14                    |
+| L3 Hit      | 30-40                    |
+| DRAM        | 100-300                  |
+
+### Modern CPU L3 Caches
+| CPU Family  | L3 Size/Core | Latency |
+|-------------|--------------|---------|
+| Intel Raptor Lake | 3MB | 36 cycles |
+| AMD Zen 4   | 32MB shared  | 40 cycles |
+| ARM Neoverse N2 | 4MB | 32 cycles |
+
+## Detection and Analysis
+
+### Linux perf Commands
+```bash
+# Basic L3 monitoring
+perf stat -e \
+mem_load_retired.l3_hit,\
+cycles \
+./app
+
+# Advanced analysis
+perf stat -e \
+cpu/event=0xD1,umask=0x2,name=MEM_LOAD_RETIRED.L3_HIT/,\
+cpu/event=0xA3,umask=0x4,name=CYCLE_ACTIVITY.STALLS_L3_MISS/ \
+./app
+```
+
+## Interpretation Guide
+
+| L3_Bound(%) | Severity       | Suggested Action               |
+|-------------|----------------|---------------------------------|
+| <2%         | Normal         | No action needed               |
+| 2-5%        | Moderate       | Optimize data locality         |
+| >5%         | Critical       | Major restructuring required   |
+
+## Real-World Optimization Example
+
+### Database Query Processing
+```c
+// Before: Full table scan
+for (int i=0; i<TABLE_SIZE; i++) {
+    if (matches_condition(table[i])) {
+        results += process(table[i]);
+    }
+}
+
+// After: Partitioned processing
+for (int p=0; p<NUM_PARTITIONS; p++) {
+    Partition* part = &partitions[p];
+    for (int i=0; i<part->size; i++) {
+        if (matches_condition(part->data[i])) {
+            results += process(part->data[i]);
+        }
+    }
+}
+```
+
+## Advanced Techniques
+
+### 1. Non-Temporal Access
+```c
+// Bypass cache for streaming writes
+_mm256_stream_ps(dest, src); // Avoid polluting L3
+```
+
+### 2. Memory Layout Transformation
+```c
+// Convert to blocked format
+for (int i=0; i<SIZE; i+=BLOCK) {
+    transpose_block(data+i);
+}
+```
+
+### 3. Core Affinity Control
+```bash
+# Limit to one L3 slice
+taskset -c 0-3 ./app # On 8-core with dual L3 slices
+```
+
+The L3_Bound(%) metric is critical for identifying workloads that exceed private cache capacities but still fit in shared last-level cache. High values indicate either:
+1. **Inefficient data locality patterns**
+2. **Excessive cross-core sharing**
+3. **Memory bandwidth saturation**
+
+Optimizations should focus on improving data locality and minimizing shared resource contention.
+
+
+
+# Understanding Contested_Accesses(%) in CPU Performance
+
+## Core Concept
+
+The `Contested_Accesses(%)` metric quantifies performance penalties from **cross-core memory access contention**, including:
+- **True sharing** (synchronization variables)
+- **False sharing** (unintended cache line contention)
+- **Lock synchronization** (spinlocks, mutexes)
+- **Snoop traffic** (cache coherence overhead)
+
+## Formula Breakdown
+
+The complex formula estimates contention by combining:
+1. **Snoop hit-with-modify (HITM)** events
+2. **Snoop forward (FWD)** events
+3. **L3 hit patterns** with cross-core sharing
+4. **Normalization** by total cycles
+
+Simplified interpretation:
+```
+Contested_Accesses(%) ≈ 
+(CrossCoreSharingPenalties * SnoopTrafficImpact * FBAdjustment) / TotalCycles
+```
+
+## Key Performance Events
+
+1. **XSNP_FWD (e)**: Snoop forwards (shared line)
+2. **SNOOP_HITM (f)**: Snoop hit-modified (exclusive line)
+3. **SNOOP_HIT_WITH_FWD (g)**: Snoop hit with forward
+4. **XSNP_MISS (h)**: Snoop misses
+5. **FB_HIT (i)**: Fill buffer hits
+6. **L1_MISS (j)**: L1 cache misses
+
+## Microarchitectural Impact
+
+### Cache Coherence Protocol
+```
+Core A modifies cache line → 
+Snoop broadcast to other cores → 
+Core B reads same line → 
+MESI state transitions (I→S or I→E) → 
+Data transfer via L3 or ring interconnect
+```
+
+### Performance Penalties
+| Contention Type       | Latency Impact |
+|-----------------------|----------------|
+| Local L1 Hit          | 4-5 cycles     |
+| Remote L3 Hit         | 40-60 cycles   |
+| Snoop HITM            | 80-100 cycles  |
+| False Sharing         | 50-200 cycles  |
+
+## Code Patterns Causing Contention
+
+### 1. False Sharing
+```c
+// Different cores write adjacent variables
+struct Bad {
+    int core1_data;  // Core 0 writes
+    int core2_data;  // Core 1 writes 
+}; // Same cache line
+```
+
+### 2. True Sharing
+```c
+// Shared atomic counter
+std::atomic<int> counter;
+void worker() {
+    for (int i=0; i<1e6; i++) {
+        counter.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+```
+
+### 3. Lock Synchronization
+```c
+// High-contention lock
+pthread_mutex_t lock;
+void worker() {
+    pthread_mutex_lock(&lock);
+    critical_section();
+    pthread_mutex_unlock(&lock);
+}
+```
+
+## Optimization Strategies
+
+### 1. False Sharing Elimination
+```c
+// Add padding between core-specific data
+struct Good {
+    int core1_data;
+    char padding[64]; // Cache line size
+    int core2_data;
+};
+```
+
+### 2. Lock-Free Algorithms
+```c
+// Replace locks with atomics
+std::atomic<int> value;
+void update() {
+    int expected = value.load();
+    while (!value.compare_exchange_weak(expected, new_value));
+}
+```
+
+### 3. Data Partitioning
+```c
+// Thread-local storage
+thread_local int local_counter;
+void worker() {
+    for (int i=0; i<1e6; i++) {
+        local_counter++;
+    }
+    global_counter += local_counter; // Single sync
+}
+```
+
+## Performance Monitoring
+
+### Linux perf Commands
+```bash
+# Basic contention detection
+perf stat -e \
+mem_load_retired.l3_hit,\
+mem_load_retired.fb_hit,\
+cpu/event=0x53,umask=0x01,name=OCR.DEMAND_DATA_RD.L3_HIT.SNOOP_HITM/ \
+./app
+
+# Detailed snoop analysis
+perf stat -e \
+cpu/event=0xA8,umask=0x01,name=MEM_LOAD_RETIRED.XSNP_HITM/,\
+cpu/event=0xA8,umask=0x02,name=MEM_LOAD_RETIRED.XSNP_FWD/ \
+./app
+```
+
+## Interpretation Guide
+
+| Contested_Accesses(%) | Severity       | Suggested Action               |
+|-----------------------|----------------|---------------------------------|
+| <1%                   | Normal         | No action needed               |
+| 1-3%                  | Moderate       | Profile sharing patterns       |
+| >3%                   | Critical       | Major synchronization overhaul |
+
+## Advanced Optimization Techniques
+
+### 1. NUMA-Aware Allocation
+```c
+// Allocate memory local to NUMA node
+void* buf = numa_alloc_onnode(size, numa_node_of_cpu(core_id));
+```
+
+### 2. Read-Mostly Sharing
+```c
+// Use RCU for read-dominated shared data
+rcu_read_lock();
+data = rcu_dereference(shared_ptr);
+rcu_read_unlock();
+```
+
+### 3. Hardware Transactional Memory
+```c
+// Intel TSX implementation
+if (_xbegin() == _XBEGIN_STARTED) {
+    // Critical section
+    _xend();
+} else {
+    fallback_lock();
+}
+```
+
+## Real-World Example
+
+### Before Optimization
+```c
+// Shared counter with false sharing
+struct Counter {
+    int a, b; // Different cores update these
+};
+```
+
+### After Optimization
+```c
+// Cache-line aligned counters
+struct Counter {
+    alignas(64) int a;
+    alignas(64) int b;
+};
+```
+
+The Contested_Accesses(%) metric is crucial for identifying scaling bottlenecks in multi-threaded applications. High values indicate significant time spent on cross-core synchronization rather than productive computation.
+
+
 
 
 
