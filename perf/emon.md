@@ -6241,5 +6241,473 @@ int main() {
 By applying these techniques, you can significantly reduce `metric_TMA_Data_Sharing(%)` and improve multi-threaded performance.
 
 
+Here's a detailed breakdown of the `metric_TMA_L3_Hit_Latency(%)` metric, explaining its components, formula logic, and optimization implications:
+
+---
+
+### **1. Metric Purpose**
+This metric estimates the percentage of CPU cycles spent waiting for **L3 cache hits** under unloaded conditions, highlighting potential latency bottlenecks in the last-level cache (LLC). It helps identify:
+- Excessive L3 accesses due to L1/L2 misses
+- Contention for shared L3 cache among cores
+- Memory subsystem inefficiencies
+
+---
+
+### **2. Event Definitions**
+| Event | Description | Microarchitectural Meaning |
+|-------|-------------|---------------------------|
+| **`CPU_CLK_UNHALTED.THREAD` (a)** | Core execution cycles | Total cycles denominator |
+| **`CPU_CLK_UNHALTED.REF_TSC` (b)** | Reference cycles | Used for frequency normalization |
+| **`MEM_LOAD_RETIRED.L3_HIT` (e)** | Demand loads hitting L3 | Measures L3 cache effectiveness |
+| **`MEM_LOAD_RETIRED.FB_HIT` (f)** | Loads hitting fill buffers | Indicates memory subsystem pressure |
+| **`MEM_LOAD_RETIRED.L1_MISS` (g)** | Demand loads missing L1 | Normalizes FB pressure |
+
+---
+
+### **3. Formula Breakdown**
+The formula calculates:
+\[
+\text{Metric} = 100 \times \frac{(37 - 4.4) \times \text{Freq} \times e \times (1 + \frac{f/g}{2})}{a}
+\]
+
+#### **Key Components:**
+1. **Effective Frequency Calculation**:
+   \[
+   \text{Freq (GHz)} = \frac{a}{b} \times \frac{c}{10^9}
+   \]
+   - Converts cycles to time for latency estimation.
+
+2. **L3 Hit Penalty Scaling**:
+   - **37 cycles**: Base L3 hit latency (architectural typical value)
+   - **4.4 cycles**: Subtracted to account for overlapping operations
+   - Net: **32.6 cycles** effective penalty per L3 hit
+
+3. **Fill Buffer Adjustment**:
+   \[
+   1 + \frac{f/g}{2}
+   \]
+   - **`f/g`**: Ratio of FB hits to L1 misses
+   - Increases latency estimate when memory subsystem is congested
+
+4. **Normalization**:
+   - Divides by total cycles (`a`) to get percentage
+
+---
+
+### **4. Why the Fill Buffer Adjustment?**
+The term `(1 + (f/g)/2)` accounts for **additional latency when fill buffers are busy**:
+- **Low `f/g` (≈0)**: Minimal FB congestion → No adjustment
+- **High `f/g` (≈1)**: Severe FB congestion → 50% latency increase
+- **Divided by 2**: Empirical scaling to avoid over-penalization
+
+**Microarchitectural Rationale**:
+- Fill buffers track pending memory requests
+- High FB occupancy (`f/g > 0.4`) indicates:
+  - DRAM bandwidth saturation
+  - NUMA latency effects
+  - Inefficient prefetching
+
+---
+
+### **5. Optimization Guidance**
+#### **When Metric > 10% (Problematic)**
+1. **Reduce L1/L2 Misses**:
+   ```cpp
+   // Example: Improve locality
+   #pragma unroll(4)
+   for (int i = 0; i < N; i += 8) { // Process 8 elements per iteration
+     _mm_prefetch(&data[i + 32], _MM_HINT_T0); // Prefetch ahead
+   }
+   ```
+
+2. **Mitigate FB Pressure**:
+   ```cpp
+   // Use non-temporal stores for streaming writes
+   _mm256_stream_ps((float*)dest, data_vec);
+   ```
+
+3. **NUMA-Aware Allocation** (GNR-specific):
+   ```bash
+   numactl --membind=0 ./program # Bind to local NUMA node
+   ```
+
+#### **Diagnosis Commands**
+```bash
+# Check L3/FB behavior
+perf stat -e \
+mem_load_retired.l3_hit,\
+mem_load_retired.fb_hit,\
+mem_load_retired.l1_miss,\
+cpu_clk_unhalted.thread
+```
+
+---
+
+### **6. GNR-Specific Considerations**
+1. **L3 Cache Structure**:
+   - Shared among tiles, higher contention potential
+   - Monitor with `uncore_imc/cas_count_read/` for bandwidth saturation
+
+2. **128B Cache Lines**:
+   - May increase false sharing → Use `alignas(128)`
+
+3. **Directory Protocol**:
+   - Reduces snoop traffic but adds slight latency
+   - Visible in higher `f/g` ratios compared to older architectures
+
+---
+
+### **7. Threshold Interpretation**
+| **Metric Value** | **Interpretation** | **Action** |
+|------------------|--------------------|------------|
+| < 5% | Healthy | No action needed |
+| 5-10% | Moderate L3 pressure | Optimize prefetching |
+| > 10% | Severe bottleneck | Restructure memory access |
+
+---
+
+### **Key Takeaways**
+1. The metric combines **L3 access latency** and **memory subsystem state** (via FB adjustment)
+2. The `37 - 4.4` cycle constants reflect:
+   - Observed L3 latency in unloaded conditions
+   - Overlap with out-of-order execution
+3. For GNR, always cross-check with:
+   ```bash
+   perf stat -e ocr.demand_data_rd.l3_hit.directory_hit
+   ```
+   To detect directory-related stalls.
+
+Would you like me to provide specific code examples for:
+1. Reducing L3 hits through blocking algorithms?
+2. Hardware prefetch tuning for GNR?
+3. Interpreting `perf` output for this metric?
+
+
+Here's a precise technical breakdown of your questions regarding Intel Xeon Granite Rapids (GNR) architecture:
+
+---
+
+### **1. Fill Buffer Location in GNR**
+#### **Physical Placement**
+- **Located in the Core's Memory Subsystem** (per physical core)
+- **Positioned between L1D Cache and L2 Cache** in the load/store pipeline
+- **Connected to the L3 Cache/Memory Controller** via the mesh interconnect
+
+#### **Key Characteristics in GNR**
+| Property | Details |
+|----------|---------|
+| **Capacity** | 12-16 entries per core (varies by SKU) |
+| **Width** | 64B/entry (handles 128B cache lines in two transactions) |
+| **Purpose** | Tracks pending cache misses until L3/DRAM responds |
+
+#### **Data Flow**
+```mermaid
+flowchart LR
+    A[L1D Miss] --> B{Fill Buffer}
+    B -->|Miss| C[L2 Cache]
+    C -->|Miss| D[L3 Cache]
+    D -->|Miss| E[Memory Controller]
+    B -->|Hit| F[Forward to Register File]
+```
+
+---
+
+### **2. Directory Protocol in GNR**
+#### **What It Is**
+A **snoop-filtering coherence mechanism** that tracks which cores have cache lines, reducing broadcast snoops.
+
+#### **When Used**
+| Scenario | Directory Action |
+|----------|------------------|
+| **Core reads line** | Checks directory → Directly fetches from owner (if exists) |
+| **Core writes line** | Directory invalidates other copies |
+| **L3 replacement** | Updates directory state |
+
+#### **Who Triggers It**
+- **Hardware Automatically** triggers directory lookups for:
+  - L1/L2 misses that reach L3
+  - Snoop requests from other sockets
+- **Software** can influence via:
+  ```cpp
+  _mm_prefetch(addr, _MM_HINT_NT); // Non-temporal hint bypasses directory
+  ```
+
+#### **GNR Implementation**
+```mermaid
+flowchart TD
+    A[Core Request] --> B{L3 Hit?}
+    B -->|Yes| C[Directory Lookup]
+    C -->|Shared| D[Forward from Owner Core]
+    C -->|Modified| E[Writeback + Forward]
+    C -->|Exclusive| F[Silent Upgrade to Modified]
+```
+
+---
+
+### **3. Fill Buffer vs. Directory Interaction**
+#### **Conflict Cases**
+1. **FB Saturation**:
+   - Directory finds line in another core
+   - But FB has no free entries → Core stalls
+   - **Fix**: Reduce outstanding misses (`_mm_pause()` in spin loops)
+
+2. **False Sharing**:
+   ```cpp
+   // Bad: 128B line shared by cores
+   struct { int a; int b; } shared; // GNR 128B line
+   ```
+   - Directory ping-pong between cores
+   - **Fix**: `alignas(128)`
+
+#### **Performance Counters**
+Monitor with:
+```bash
+perf stat -e \
+mem_load_retired.fb_hit,\
+ocr.demand_data_rd.l3_hit.directory_hit,\
+cycle_activity.stalls_l3_miss
+```
+
+---
+
+### **4. Optimization Guidelines**
+#### **For Fill Bottlenecks**
+1. **Increase Temporal Locality**:
+   ```cpp
+   for (int i = 0; i < N; i += 8) { // Process cache-line multiples
+     _mm_prefetch(&data[i+32], _MM_HINT_T0);
+   }
+   ```
+
+2. **Use NT Stores**:
+   ```cpp
+   _mm256_stream_ps(dest, data); // Bypass FB for streaming
+   ```
+
+#### **For Directory Contention**
+1. **NUMA-Aware Allocation**:
+   ```bash
+   numactl --interleave=all ./program
+   ```
+
+2. **Reduce Snoops**:
+   ```cpp
+   __builtin_assume_aligned(ptr, 128); // Minimize false sharing
+   ```
+
+---
+
+### **Key Takeaways**
+| Component | GNR Innovation | Watch For |
+|-----------|----------------|-----------|
+| **Fill Buffer** | Deeper (~16 entries) | `FB_HIT/L1_MISS > 0.5` |
+| **Directory** | Per-tile distributed | High `directory_hit` + low `snoop_hitm` |
+| **Interaction** | FB stalls hide directory wins | Check `cycle_activity.stalls_l3_miss` | 
+
+Would you like me to provide specific VTune configurations to profile these?
+
+
+Here's a precise technical breakdown of your questions about Intel Xeon Granite Rapids (GNR) architecture:
+
+---
+
+### **1. Fill Buffer Positioning & Mesh Interconnect**
+#### **Revised Data Path (Corrected)**
+```mermaid
+flowchart TD
+    A[L1D Cache] -->|Miss| B[Fill Buffer]
+    B -->|Probe| C[L2 Cache]
+    C -->|Miss| D[L3 Slice]
+    D -->|Directory Lookup| E[Mesh Interconnect]
+    E -->|Forward| F[Owner Core's L2/L1]
+    E -->|Memory| G[DRAM Controller]
+```
+
+**Key Clarifications:**
+1. **Fill Buffers (FB)** are indeed between L1D and L2, but:
+   - They **hold requests** while L2/L3 are being accessed
+   - Once L2 misses, the FB entry stays active while the request goes through the **mesh** to L3/other cores
+
+2. **GNR Mesh Interconnect**:
+```mermaid
+graph LR
+    subgraph Tile
+        A[Core0] <--> M[Mesh Router]
+        B[Core1] <--> M
+        C[L3 Slice] <--> M
+    end
+    Tile1 <-->|Mesh| Tile2
+    Tile1 <-->|Mesh| MemoryController
+```
+- **Composition**: Bidirectional links between tiles (each tile has cores + L3 slice)
+- **Bandwidth**: ~2TB/s bisection bandwidth in GNR
+- **Protocol**: Implements **directory coherence** traffic
+
+---
+
+### **2. Why Only L3 Updates Directory State?**
+#### **Microarchitectural Rationale**
+| Cache Level | Directory Role | Reason |
+|-------------|----------------|--------|
+| **L1/L2** | No directory tracking | Private to core → Coherence handled by L3 |
+| **L3** | Maintains directory | Last-level cache (LLC) sees all cross-core traffic |
+| **DRAM** | N/A | Directory is a cache-resident structure |
+
+**Workflow Example**:
+1. **Core A** writes to line X (L1/L2 updated silently)
+2. **Core B** reads X:
+   - L3 directory checks state
+   - If Core A has X in Modified state:
+     - Triggers `SNOOP_HITM`
+     - Core A writes back to L3 (updating directory)
+   - Directory now marks both cores as Shared
+
+#### **GNR-Specific Behavior**
+- **Distributed Directories**: Each L3 slice manages its portion
+- **On-Chip Directory**: No DRAM involvement until eviction
+- **Silent Upgrades**: L1/L2 can go E→M without directory update (optimization)
+
+---
+
+### **3. Why This Design?**
+1. **Scalability**:
+   - L3 is shared across tiles → Natural coherence point
+   - Avoids broadcasting snoops to all cores
+
+2. **Performance**:
+   - L1/L2 accesses are >100x faster than DRAM → Keep them private
+   - Directory updates only on cross-core sharing events
+
+3. **Power Efficiency**:
+   - L3 directory filters unnecessary snoops
+   - Mesh interconnect minimizes data movement
+
+---
+
+### **4. Practical Implications**
+#### **For Programmers**
+1. **Reduce Directory Updates**:
+   ```cpp
+   // Bad: Frequent cross-core writes
+   std::atomic<int> counter; // Triggers directory updates
+
+   // Good: Thread-local + periodic sync
+   thread_local int local_counter;
+   ```
+
+2. **Optimize for Mesh**:
+   ```cpp
+   // Place communicator threads on adjacent tiles
+   #pragma omp parallel proc_bind(close)
+   ```
+
+#### **For Tuning**
+Monitor with:
+```bash
+perf stat -e \
+uncore_imc_0/cas_count_read/, \
+ocr.demand_data_rd.l3_hit.directory_hit, \
+mem_load_retired.fb_hit
+```
+
+---
+
+### **Key Takeaways**
+| Component | GNR Innovation | Watch For |
+|-----------|----------------|-----------|
+| **Fill Buffers** | Hold requests during mesh traversal | High `fb_hit` → Prefetch more |
+| **Mesh** | Non-uniform hop latency | NUMA imbalances |
+| **Directory** | Per-L3-slice | High `directory_hit` → Reduce sharing | 
+
+Would you like me to provide specific code examples demonstrating mesh-aware data placement?
+
+# Cache Coherence Protocol Deep Dive: M State Detection
+
+In modern Intel processors (like Redwood Cove), the cache coherence system uses a sophisticated **snoop-based directory protocol** to track modified (M-state) cache lines. Here's exactly how Core B discovers Core A has line X in Modified state:
+
+## 1. Initial State (Core A's Write)
+- **Core A** executes `mov [X], 0x42`
+- L1D cache checks for line X:
+  - If present in E/M state: Silent update
+  - If not present: Triggers RFO (Read-For-Ownership)
+- **Directory State Update**:
+  - The **distributed tag directory** (part of L3 cache) tracks which cores might have copies
+  - On RFO, directory marks line X as "likely modified" in Core A's cache
+
+## 2. Core B's Read Attempt
+When **Core B** later executes `mov rax, [X]`:
+
+### Step 1: Local Cache Check
+- Core B's L1D cache lookup (tag check)
+- Miss occurs (line not present or invalid)
+
+### Step 2: L2 Cache Check
+- L2 slice checks its tags
+- Also misses (line not in Core B's private caches)
+
+### Step 3: Consult Coherence Directory
+- The **L3 cache tag directory** is queried
+- Directory indicates:
+  - Line X is "possibly modified" in Core A
+  - No other valid copies exist
+
+### Step 4: Snoop Phase
+1. **Snoop request** sent to Core A over the **ring interconnect**
+   - Uses **snoop filter** (in L3) to minimize broadcast
+2. Core A's **snoop handler** checks its caches:
+   - Finds line X in M state in L1D
+   - Generates **HITM (Hit Modified)** response
+3. **Data transfer** occurs:
+   - Core A's modified data sent to:
+     - Requesting core (Core B)
+     - L3 cache (becomes S state)
+   - Core A downgrades to S state
+
+## Key Hardware Structures Involved
+
+| Component | Role |
+|-----------|------|
+| L3 Tag Directory | Tracks approximate cache line states per core |
+| Snoop Filter | Reduces unnecessary snoop traffic |
+| Ring Interconnect | Carries snoop requests/responses |
+| Snoop Handlers | Process incoming snoops in each core |
+
+## Performance Implications
+
+- **HITM Penalty**: ~80-100 cycles (vs 4 cycles for L1 hit)
+- **Directory Lookup**: ~10-15 cycles (part of L3 access)
+- **Data Transfer**: ~30-40 cycles over ring bus
+
+## Why Silent Updates Don't Break Coherence
+
+1. **Directory Hinting**:
+   - Even silent updates mark directory state
+   - Subsequent accesses must consult directory
+
+2. **Snoop-Based Verification**:
+   - Actual coherence enforced during snoops
+   - Directory provides hints, not absolute truth
+
+3. **Race Condition Handling**:
+   - If directory is stale, snoop will discover true state
+   - MESI transitions are atomic at snoop time
+
+## Real-World Example
+
+```asm
+; Core A
+mov [X], 1  ; Silent update (M state)
+; ... cycles later ...
+; Core B
+mov rax, [X] ; Triggers:
+             ; 1. Local misses
+             ; 2. Directory lookup
+             ; 3. Snoop to Core A
+             ; 4. HITM response
+             ; 5. Data transfer
+```
+
+This protocol ensures correctness while minimizing directory updates, trading occasional extra snoops (when directory hints are wrong) for reduced coherence traffic during normal operation.
+
 
 
