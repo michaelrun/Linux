@@ -8,18 +8,14 @@ Assume the following cache parameters:
 - **Block size**: 64 bytes (\( 2^6 \) bytes) → **\( o = 6 \) bits**  
 - **Associativity**: 4-way (\( e = 4 \)) → **\( e' = 2 \)**  
 - **Number of sets (\( n \))**:  
-  \[
-  n = \frac{\text{Cache Size}}{\text{Block Size} \times \text{Associativity}} = \frac{2^{20}}{2^6 \times 4} = 2^{12} = 4096 \text{ sets}
-  \]
-  → **\( s = 12 \) bits**  
+![image](https://github.com/user-attachments/assets/8bc6103f-a90a-460a-9776-33bcedc16036)
 
 ---
 
 ### **Step 1: Split the 64-bit Physical Address**
 For a 64-bit address:  
-\[
-\text{Address} = \text{Tag (t)} + \text{Set Index (s)} + \text{Offset (o)}
-\]  
+![image](https://github.com/user-attachments/assets/af0050c2-290d-4b47-bd72-d59733da8808)
+
 - **Offset (o)**: 6 bits (to select a byte within a 64-byte block).  
 - **Set Index (s)**: 12 bits (to select 1 of 4096 sets).  
 - **Tag (t)**: Remaining bits = \( 64 - 12 - 6 = 46 \) bits.  
@@ -76,23 +72,20 @@ Let’s use the address **`0xFFFF0000ABCD1234`**:
 
 ### **Key Formulas**
 1. **Offset bits (\( o \))**:  
-   \[
-   o = \log_2(\text{Block Size}) = \log_2(64) = 6
-   \]  
+![image](https://github.com/user-attachments/assets/600eab99-c7a3-443d-a883-816e59d60ebd)
+
 2. **Set Index bits (\( s \))**:  
-   \[
-   s = \log_2\left(\frac{\text{Cache Size}}{\text{Block Size} \times \text{Associativity}}\right) = \log_2(4096) = 12
-   \]  
+![image](https://github.com/user-attachments/assets/a266d672-b77b-4027-8caa-4b8fe934d5b2)
+ 
 3. **Tag bits (\( t \))**:  
-   \[
-   t = \text{Address Width} - (s + o) = 64 - 18 = 46
-   \]  
+![image](https://github.com/user-attachments/assets/9ec06a49-cc10-4ece-b56c-752bf6ca79e8)
 
 ---
 
 ### **Variations**
-- **Fully Associative Cache**: No set index (\( s = 0 \)), so the entire address (except offset) is the tag.  
-- **Direct-Mapped Cache**: Associativity = 1 (\( e = 1 \)), so \( s = \log_2(\text{Number of Sets}) \).  
+- **Fully Associative Cache**: No set index ( s = 0 ), so the entire address (except offset) is the tag.  
+- **Direct-Mapped Cache**: Associativity = 1 ( e = 1), so ![image](https://github.com/user-attachments/assets/23fe5ce2-8081-429f-8947-07695a362403)
+.  
 
 ---
 
