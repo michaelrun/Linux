@@ -33,3 +33,24 @@ Key Changes with SVM
 
 <img width="5434" height="3514" alt="deepseek_mermaid_20251106_7f2029" src="https://github.com/user-attachments/assets/32124890-306a-42ba-a6fe-5f4397b62453" />
 
+## Memory Copy Elimination Timeline ##
+
+<img width="3178" height="2130" alt="deepseek_mermaid_20251106_a0ca4c" src="https://github.com/user-attachments/assets/b88af1a8-a92e-454a-a56c-31d60bc091f7" />
+
+3. What SVM actually eliminates:
+
+✅ VA→IOVA translation in software
+
+✅ Pointer fixup for complex data structures
+
+✅ Buffer registration/pinning overhead
+
+✅ Driver complexity for dynamic memory
+
+4. What SVM does NOT eliminate:
+
+❌ Memory bandwidth usage (same data accessed)
+
+❌ IOMMU translations (moved to hardware)
+
+❌ Cache coherency overhead
